@@ -25,13 +25,13 @@ func TestMatchRoute(t *testing.T) {
 	routes = map[Method][]route{}
 
 	// Register some routes
-	Route(GET, "/hello/:id", func(req *Request, params map[string]string) *Response {
+	Handle(GET, "/hello/:id", func(req *Request, params map[string]string) *Response {
 		return nil
 	})
-	Route(GET, "/user/:userId/profile", func(req *Request, params map[string]string) *Response {
+	Handle(GET, "/user/:userId/profile", func(req *Request, params map[string]string) *Response {
 		return nil
 	})
-	Route(POST, "/post/:postId/comment/:commentId", func(req *Request, params map[string]string) *Response {
+	Handle(POST, "/post/:postId/comment/:commentId", func(req *Request, params map[string]string) *Response {
 		return nil
 	})
 

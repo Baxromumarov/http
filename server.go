@@ -81,7 +81,7 @@ func (s *Server) handleConn(conn net.Conn) {
 			Headers: Header{
 				req.Header.Get("Accept"): {"text/plain"},
 			},
-			Body: []byte("Not found"),
+			Body: []byte("404 Not found"),
 		}
 	}
 
@@ -129,8 +129,8 @@ func matchRoute(method Method, path string) (HandlerFunc, map[string]string) {
 	return nil, nil
 }
 
-// Route registers a handler for the given method and path
-func Route(method Method, path string, handler HandlerFunc) {
+// Handle registers a handler for the given method and path
+func Handle(method Method, path string, handler HandlerFunc) {
 	if routes[method] == nil {
 		routes[method] = make([]route, 0)
 	}
