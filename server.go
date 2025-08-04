@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -94,46 +95,190 @@ func (s *Server) Close() {
 func (s *Server) handleConn(conn net.Conn) {
 	defer func() { _ = conn.Close() }()
 
+	// Setup connection
+	if err := s.setupConnection(conn); err != nil {
+		log.Printf("error setting up connection: %s", err)
+		return
+	}
+
+	// Read and parse the HTTP request
+	req, err := s.readAndParseRequest(conn)
+	if err != nil {
+		log.Printf("error reading/parsing request: %s", err)
+		return
+	}
+
+	// Process the request through middleware and handlers
+	resp := s.processRequest(req)
+
+	// Write the response
+	writeResponse(conn, resp)
+}
+
+// setupConnection configures the connection with timeouts and Nagle's algorithm settings
+func (s *Server) setupConnection(conn net.Conn) error {
+	// Track connection
 	s.mu.Lock()
 	s.conn[conn.RemoteAddr().String()] = struct{}{}
 	s.mu.Unlock()
 
+	// Configure Nagle's algorithm if disabled
 	if s.DisableNagle {
-		tcpConn, ok := conn.(*net.TCPConn)
-		if !ok {
+		if tcpConn, ok := conn.(*net.TCPConn); ok {
+			if err := tcpConn.SetNoDelay(true); err != nil {
+				log.Printf("cannot set nodelay: %s", err)
+				return err
+			}
+		} else {
 			log.Printf("connection is not a TCP connection")
 		}
+	}
 
-		err := tcpConn.SetNoDelay(true)
+	// Set timeouts
+	return s.timeoutHandler(conn)
+}
+
+// readAndParseRequest reads the HTTP request from the connection and parses it
+func (s *Server) readAndParseRequest(conn net.Conn) (*Request, error) {
+	// Read headers
+	headersPart, bodyStart, err := s.readHeaders(conn)
+	if err != nil {
+		return nil, fmt.Errorf("error reading headers: %w", err)
+	}
+
+	// Get content length from headers
+	contentLength, err := s.getContentLength(headersPart)
+	if err != nil {
+		return nil, fmt.Errorf("error getting content length: %w", err)
+	}
+
+	// Read the complete body
+	fullBody, err := s.readBody(conn, bodyStart, contentLength)
+	if err != nil {
+		return nil, fmt.Errorf("error reading body: %w", err)
+	}
+
+	// Construct and parse the full request
+	fullRequest := append(headersPart, fullBody...)
+	req, err := parseRequest(fullRequest)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing request: %w", err)
+	}
+
+	return req, nil
+}
+
+// readHeaders reads the HTTP headers from the connection
+func (s *Server) readHeaders(conn net.Conn) ([]byte, []byte, error) {
+	var headerBuf bytes.Buffer
+	tmp := make([]byte, 1)
+
+	for {
+		n, err := conn.Read(tmp)
+		if n > 0 {
+			headerBuf.Write(tmp[:n])
+			if strings.Contains(headerBuf.String(), "\r\n\r\n") {
+				break
+			}
+		}
 		if err != nil {
-			log.Printf("cannot set nodelay: %s", err)
-			return
+			return nil, nil, fmt.Errorf("error reading from connection: %w", err)
 		}
 	}
 
-	// set timeouts
-	if err := s.timeoutHandler(conn); err != nil {
-		log.Printf("error setting timeouts: %s", err)
-		return
+	headerData := headerBuf.Bytes()
+	headerEnd := bytes.Index(headerData, doubleCRLF)
+	if headerEnd == -1 {
+		return nil, nil, fmt.Errorf("no header-body separator found")
 	}
 
-	buf := make([]byte, defaultBufSize)
-	n, err := conn.Read(buf)
-	if err != nil {
-		log.Printf("error reading from connection: %s", err)
-		return
+	headersPart := headerData[:headerEnd+4]
+	bodyStart := headerData[headerEnd+4:]
+
+	return headersPart, bodyStart, nil
+}
+
+// getContentLength extracts the Content-Length header value
+func (s *Server) getContentLength(headersPart []byte) (int, error) {
+	// Parse headers to get Content-Length
+	tmpReq := &Request{Header: make(Header)}
+	lines := bytes.Split(headersPart, crlf)
+	if len(lines) < 1 {
+		return 0, fmt.Errorf("no request line found")
 	}
 
-	req, err := parseRequest(buf[:n])
-	if err != nil {
-		log.Printf("error parsing request: %s", err)
-		return
+	// Parse request line
+	reqLine := string(lines[0])
+	partsReq := strings.SplitN(reqLine, string(space), 3)
+	if len(partsReq) != 3 {
+		return 0, fmt.Errorf("malformed request line")
 	}
 
+	// Parse headers
+	for _, line := range lines[1:] {
+		lineStr := string(line)
+		if lineStr == "" {
+			continue
+		}
+		colon := strings.Index(lineStr, string(colon))
+		if colon == -1 {
+			continue
+		}
+
+		key := strings.TrimSpace(lineStr[:colon])
+		val := strings.TrimSpace(lineStr[colon+1:])
+		tmpReq.Header[key] = append(tmpReq.Header[key], val)
+	}
+
+	// Get Content-Length
+	contentLength := 0
+	if cl := tmpReq.Header.Get("Content-Length"); cl != "" {
+		contentLength, _ = strconv.Atoi(cl)
+	}
+
+	return contentLength, nil
+}
+
+// readBody reads the complete HTTP body based on Content-Length
+func (s *Server) readBody(conn net.Conn, bodyStart []byte, contentLength int) ([]byte, error) {
+	if contentLength <= 0 {
+		return bodyStart, nil
+	}
+
+	remainingBytes := contentLength - len(bodyStart)
+	if remainingBytes <= 0 {
+		return bodyStart[:contentLength], nil
+	}
+
+	remainingBody := make([]byte, remainingBytes)
+	if _, err := io.ReadFull(conn, remainingBody); err != nil {
+		return nil, fmt.Errorf("error reading remaining body: %w", err)
+	}
+
+	return append(bodyStart, remainingBody...), nil
+}
+
+// processRequest handles the request through middleware and route matching
+func (s *Server) processRequest(req *Request) *Response {
+	// Find matching route
 	handler, params := matchRoute(req.Method, req.Path)
 	req.pathParams = params
 
 	// Create the handler chain with middleware
+	handlerChain := s.createHandlerChain(handler)
+
+	// Execute the handler chain
+	resp := handlerChain(req, params, nil)
+
+	// Ensure response has required headers
+	s.ensureResponseHeaders(resp)
+
+	return resp
+}
+
+// createHandlerChain creates the middleware chain
+func (s *Server) createHandlerChain(handler HandlerFunc) HandlerFunc {
+	// Start with the route handler
 	var handlerChain HandlerFunc = func(req *Request, params map[string]string, next HandlerFunc) *Response {
 		if handler == nil {
 			return &Response{
@@ -142,7 +287,7 @@ func (s *Server) handleConn(conn net.Conn) {
 				Body:       []byte("404 Not found"),
 			}
 		}
-		return handler(req, params, nil) // Last handler in chain gets nil as next
+		return handler(req, params, nil)
 	}
 
 	// Apply middleware in reverse order
@@ -154,10 +299,11 @@ func (s *Server) handleConn(conn net.Conn) {
 		}
 	}
 
-	// Execute the handler chain
-	resp := handlerChain(req, params, nil)
+	return handlerChain
+}
 
-	// Ensure response has required headers
+// ensureResponseHeaders ensures the response has required headers
+func (s *Server) ensureResponseHeaders(resp *Response) {
 	if resp.Header == nil {
 		resp.Header = make(Header)
 	}
@@ -166,7 +312,8 @@ func (s *Server) handleConn(conn net.Conn) {
 		resp.Header["Content-Type"] = []string{ContentTypeJSON}
 	}
 
-	writeResponse(conn, resp)
+	// Set Content-Length header
+	resp.Header["Content-Length"] = []string{strconv.Itoa(len(resp.Body))}
 }
 
 // HandlerFunc is a function that takes a request and returns a response
@@ -347,8 +494,8 @@ func parseRequest(data []byte) (*Request, error) {
 	}
 
 	if len(bodyPart) > 0 {
-		if val, ok := req.Header["content-length"]; ok {
-			n, err := strconv.Atoi(val[0])
+		if val := req.Header.Get("Content-Length"); val != "" {
+			n, err := strconv.Atoi(val)
 			if err != nil {
 				return nil, errors.New("invalid content-length")
 			}

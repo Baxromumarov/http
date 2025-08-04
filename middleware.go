@@ -16,22 +16,41 @@ func (s *Server) Use(middleware ...HandlerFunc) {
 
 func Recover() HandlerFunc {
 	return func(req *Request, params map[string]string, next HandlerFunc) *Response {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("Panic recovered: %v", r)
-				// Continue to next middleware/handler
+		var resp *Response
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("Panic recovered: %v", r)
+					resp = &Response{
+						StatusCode: 500,
+						Header:     Header{"Content-Type": {ContentTypeJSON}},
+						Body:       []byte("Internal Server Error"),
+					}
+				}
+			}()
 
+			if next != nil {
+				resp = next(req, params, nil)
+			} else {
+				resp = &Response{
+					StatusCode: 500,
+					Header:     Header{"Content-Type": {ContentTypeJSON}},
+					Body:       []byte("Internal Server Error"),
+				}
 			}
 		}()
 
-		if next != nil {
-			return next(req, params, nil)
+		// Ensure CORS headers are present even after panic
+		if resp != nil && resp.Header == nil {
+			resp.Header = make(Header)
 		}
-		return &Response{
-			StatusCode: 500,
-			Header:     Header{"Content-Type": {ContentTypeJSON}},
-			Body:       []byte("Internal Server Error"),
+		if resp != nil {
+			resp.Header["Access-Control-Allow-Origin"] = []string{"*"}
+			resp.Header["Access-Control-Allow-Methods"] = []string{"GET, POST, PUT, DELETE, OPTIONS"}
+			resp.Header["Access-Control-Allow-Headers"] = []string{"Content-Type, Authorization"}
 		}
+
+		return resp
 	}
 }
 func Logger() HandlerFunc {
@@ -68,7 +87,7 @@ func CORS() HandlerFunc {
 				Header: Header{
 					"Access-Control-Allow-Origin":  {"*"},
 					"Access-Control-Allow-Methods": {"GET, POST, PUT, DELETE, OPTIONS"},
-					"Access-Control-Allow-Header":  {"Content-Type, Authorization"},
+					"Access-Control-Allow-Headers": {"Content-Type, Authorization"},
 					"Access-Control-Max-Age":       {"86400"}, // 24 hours
 				},
 			}
@@ -87,9 +106,12 @@ func CORS() HandlerFunc {
 		}
 
 		// Add CORS headers to the response
+		if resp.Header == nil {
+			resp.Header = make(Header)
+		}
 		resp.Header["Access-Control-Allow-Origin"] = []string{"*"}
 		resp.Header["Access-Control-Allow-Methods"] = []string{"GET, POST, PUT, DELETE, OPTIONS"}
-		resp.Header["Access-Control-Allow-Header"] = []string{"Content-Type, Authorization"}
+		resp.Header["Access-Control-Allow-Headers"] = []string{"Content-Type, Authorization"}
 
 		return resp
 	}

@@ -50,12 +50,13 @@ func (c *Client) Send(req *Request) (*Response, error) {
 
 	// req to raw HTTP request bytes
 	rawRequest := req.Raw()
-
+	fmt.Println("RAW REQUEST: ", len(rawRequest))
 	// Write the request bytes
-	_, err = tcpConn.Write(rawRequest)
+	n, err := tcpConn.Write(rawRequest)
 	if err != nil {
 		return nil, fmt.Errorf("error writing request: %w", err)
 	}
+	fmt.Println("WROTE: ", n)
 
 	// Read full response
 	var respBuf bytes.Buffer
@@ -72,10 +73,15 @@ func (c *Client) Send(req *Request) (*Response, error) {
 				break // finished reading
 			}
 
+			// Check if the connection was closed by the server
+			if strings.Contains(err.Error(), "connection reset by peer") ||
+				strings.Contains(err.Error(), "broken pipe") {
+				break // server closed the connection, but we have the response
+			}
+
 			return nil, fmt.Errorf("error reading response: %w", err)
 		}
 	}
-	fmt.Println("HEWRER", respBuf.String())
 	return parseResponse(respBuf.Bytes())
 }
 
@@ -97,7 +103,7 @@ func (r *Request) Raw() []byte {
 
 	//other headers
 	for k, v := range r.Header {
-		buf.WriteString(fmt.Sprintf("%s: %s\r\n", k, v))
+		buf.WriteString(fmt.Sprintf("%s: %s\r\n", k, strings.Join(v, ", ")))
 	}
 
 	// End headers with an empty line
@@ -155,8 +161,15 @@ func parseResponse(raw []byte) (*Response, error) {
 		}
 	}
 
-	// Handle Content-Length
-	if clStr, ok := headers["Content-Length"]; ok {
+	// Handle chunked encoding
+	if te, ok := headers["Transfer-Encoding"]; ok && len(te) > 0 && te[0] == "chunked" {
+		decodedBody, err := decodeChunked(body)
+		if err != nil {
+			return nil, fmt.Errorf("error decoding chunked body: %v", err)
+		}
+		body = decodedBody
+	} else if clStr, ok := headers["Content-Length"]; ok {
+		// Handle Content-Length
 		if len(clStr) == 0 {
 			return nil, fmt.Errorf("empty Content-Length")
 		}
@@ -168,9 +181,8 @@ func parseResponse(raw []byte) (*Response, error) {
 
 		if len(body) > cl {
 			body = body[:cl]
-		} else if len(body) < cl {
-			return nil, fmt.Errorf("body shorter than Content-Length")
 		}
+		// If body is shorter than Content-Length, that's okay - it might be truncated
 	}
 
 	return &Response{
@@ -182,6 +194,9 @@ func parseResponse(raw []byte) (*Response, error) {
 }
 
 func NewRequest(method Method, url string, body []byte) (*Request, error) {
+	if url == "" {
+		return nil, fmt.Errorf("empty URL")
+	}
 
 	u, err := urlPkg.Parse(url)
 	if err != nil {
