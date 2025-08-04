@@ -2,6 +2,7 @@ package http_go
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -23,8 +24,14 @@ type Server struct {
 	Host string
 	Port int
 
-	conn map[string]struct{}
-	mu   sync.Mutex // for conn, currently only full locking is used, in v2 it will be extended
+	WriteTimeout time.Duration
+	ReadTimeout  time.Duration
+	IdleTimeout  time.Duration
+
+	DisableNagle bool // https://en.wikipedia.org/wiki/Nagle%27s_algorithm
+	conn         map[string]struct{}
+	mu           sync.Mutex // for conn, currently only full locking is used, in v2 it will be extended
+	middleware   []HandlerFunc
 }
 
 func (s *Server) StartServer() error {
@@ -47,12 +54,68 @@ func (s *Server) StartServer() error {
 		go s.handleConn(conn)
 	}
 }
+
+func (s *Server) timeoutHandler(conn net.Conn) error {
+	if s.ReadTimeout == 0 {
+		s.ReadTimeout = 1 * time.Minute
+	}
+
+	if s.WriteTimeout == 0 {
+		s.WriteTimeout = 1 * time.Minute
+	}
+
+	if s.IdleTimeout == 0 {
+		s.IdleTimeout = 1 * time.Minute
+	}
+
+	if err := conn.SetReadDeadline(time.Now().Add(s.ReadTimeout)); err != nil {
+		return fmt.Errorf("error setting read deadline: %s", err)
+	}
+
+	if err := conn.SetWriteDeadline(time.Now().Add(s.WriteTimeout)); err != nil {
+		return fmt.Errorf("error setting write deadline: %s", err)
+	}
+
+	if err := conn.SetDeadline(time.Now().Add(s.IdleTimeout)); err != nil {
+		return fmt.Errorf("error setting idle deadline: %s", err)
+	}
+
+	return nil
+}
+
+func (s *Server) Close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k := range s.conn {
+		delete(s.conn, k)
+	}
+}
+
 func (s *Server) handleConn(conn net.Conn) {
 	defer func() { _ = conn.Close() }()
 
 	s.mu.Lock()
 	s.conn[conn.RemoteAddr().String()] = struct{}{}
 	s.mu.Unlock()
+
+	if s.DisableNagle {
+		tcpConn, ok := conn.(*net.TCPConn)
+		if !ok {
+			log.Printf("connection is not a TCP connection")
+		}
+
+		err := tcpConn.SetNoDelay(true)
+		if err != nil {
+			log.Printf("cannot set nodelay: %s", err)
+			return
+		}
+	}
+
+	// set timeouts
+	if err := s.timeoutHandler(conn); err != nil {
+		log.Printf("error setting timeouts: %s", err)
+		return
+	}
 
 	buf := make([]byte, defaultBufSize)
 	n, err := conn.Read(buf)
@@ -66,30 +129,48 @@ func (s *Server) handleConn(conn net.Conn) {
 		log.Printf("error parsing request: %s", err)
 		return
 	}
-	fmt.Println(">>>>>>>>>>>")
 
 	handler, params := matchRoute(req.Method, req.Path)
-	fmt.Println("params: ", params)
 	req.pathParams = params
-	var resp *Response
 
-	if handler != nil {
-		resp = handler(req, params)
-	} else {
-		resp = &Response{
-			StatusCode: 404,
-			Headers: Header{
-				req.Header.Get("Accept"): {"text/plain"},
-			},
-			Body: []byte("404 Not found"),
+	// Create the handler chain with middleware
+	var handlerChain HandlerFunc = func(req *Request, params map[string]string, next HandlerFunc) *Response {
+		if handler == nil {
+			return &Response{
+				StatusCode: 404,
+				Header:     Header{"Content-Type": {ContentTypeJSON}},
+				Body:       []byte("404 Not found"),
+			}
 		}
+		return handler(req, params, nil) // Last handler in chain gets nil as next
+	}
+
+	// Apply middleware in reverse order
+	for i := len(s.middleware) - 1; i >= 0; i-- {
+		mw := s.middleware[i]
+		next := handlerChain
+		handlerChain = func(req *Request, params map[string]string, _ HandlerFunc) *Response {
+			return mw(req, params, next)
+		}
+	}
+
+	// Execute the handler chain
+	resp := handlerChain(req, params, nil)
+
+	// Ensure response has required headers
+	if resp.Header == nil {
+		resp.Header = make(Header)
+	}
+
+	if _, ok := resp.Header["Content-Type"]; !ok && len(resp.Body) > 0 {
+		resp.Header["Content-Type"] = []string{ContentTypeJSON}
 	}
 
 	writeResponse(conn, resp)
 }
 
 // HandlerFunc is a function that takes a request and returns a response
-type HandlerFunc func(req *Request, params map[string]string) *Response
+type HandlerFunc func(req *Request, params map[string]string, next HandlerFunc) *Response
 
 var routes = map[Method][]route{}
 
@@ -112,7 +193,7 @@ func matchRoute(method Method, path string) (HandlerFunc, map[string]string) {
 		match := true
 
 		for i := range patternParts {
-			if strings.HasPrefix(patternParts[i], ":") {
+			if strings.HasPrefix(patternParts[i], string(colon)) {
 				key := patternParts[i][1:]
 				params[key] = pathParts[i]
 			} else if patternParts[i] != pathParts[i] {
@@ -173,7 +254,13 @@ type Request struct {
 	Query   map[string][]string
 	Version string // HTTP/1.1
 	Header  Header
-	Body    []byte
+	Body    []byte // data is always byte array in network, I didn't want to make it some other shit type
+
+	URL  *url.URL
+	Host string
+	Port int64
+
+	ctx context.Context
 
 	pathParams map[string]string
 }
@@ -182,6 +269,7 @@ var (
 	crlf       = []byte("\r\n")
 	doubleCRLF = []byte("\r\n\r\n")
 	space      = []byte(" ")
+	colon      = []byte(":")
 )
 
 func parseRequest(data []byte) (*Request, error) {
@@ -248,7 +336,7 @@ func parseRequest(data []byte) (*Request, error) {
 		if lineStr == "" {
 			continue
 		}
-		colon := strings.Index(lineStr, ":")
+		colon := strings.Index(lineStr, string(colon))
 		if colon == -1 {
 			continue
 		}
@@ -327,6 +415,13 @@ func (r *Request) PathValue(key string) string {
 	return r.pathParams[key]
 }
 
+func (r *Request) QueryValue(key string) []string {
+	if r.Query == nil {
+		return []string{}
+	}
+	return r.Query[key]
+}
+
 // Response : HTTP/1.1 200 OK
 // Date: Mon, 27 Jul 2009 12:28:53 GMT
 // Server: Apache
@@ -337,10 +432,12 @@ func (r *Request) PathValue(key string) string {
 // Vary: Accept-Encoding
 // Content-Type: text/plain
 type Response struct {
-	StatusCode int
-	Status     string
-	Headers    Header
-	Body       []byte
+	StatusCode    int
+	Status        string
+	Header        Header
+	Body          []byte
+	ContentLength int64
+	Request       *Request
 }
 
 //handleGET(path string, conn net.Conn)	Dispatches GET routes
@@ -353,7 +450,7 @@ func writeResponse(conn net.Conn, resp *Response) {
 	buf.WriteString("Date: " + time.Now().Format(time.RFC1123) + "\r\n")
 	buf.WriteString("Server: Go HTTP Server\r\n")
 
-	for k, v := range resp.Headers {
+	for k, v := range resp.Header {
 		buf.WriteString(fmt.Sprintf("%s: %s\r\n", k, strings.Join(v, ", ")))
 	}
 
@@ -367,4 +464,21 @@ func writeResponse(conn net.Conn, resp *Response) {
 		log.Printf("error writing response: %v\n", err)
 	}
 
+}
+
+// HTTP method shortcuts
+func (s *Server) GET(path string, handler HandlerFunc) {
+	Handle(GET, path, handler)
+}
+
+func (s *Server) POST(path string, handler HandlerFunc) {
+	Handle(POST, path, handler)
+}
+
+func (s *Server) PUT(path string, handler HandlerFunc) {
+	Handle(PUT, path, handler)
+}
+
+func (s *Server) DELETE(path string, handler HandlerFunc) {
+	Handle(DELETE, path, handler)
 }
