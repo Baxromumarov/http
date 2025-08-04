@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	http_go "github.com/baxromumarov/http-go"
+	"github.com/baxromumarov/http"
 )
 
 // User represents a user in our system
@@ -34,7 +34,7 @@ type Response struct {
 
 func main() {
 	// Create HTTP client
-	client := &http_go.Client{
+	client := &http.Client{
 		Timeout: 10 * time.Second,
 	}
 
@@ -89,8 +89,8 @@ func main() {
 	fmt.Println("\n✅ Client demo completed!")
 }
 
-func healthCheck(client *http_go.Client) {
-	req, err := http_go.NewRequest(http_go.GET, "http://localhost:8080/api/health", nil)
+func healthCheck(client *http.Client) {
+	req, err := http.NewRequest(http.GET, "http://localhost:8080/api/health", nil)
 	if err != nil {
 		log.Printf("❌ Failed to create health check request: %v", err)
 		return
@@ -119,8 +119,8 @@ func healthCheck(client *http_go.Client) {
 	}
 }
 
-func getAllUsers(client *http_go.Client) {
-	req, err := http_go.NewRequest(http_go.GET, "http://localhost:8080/api/users", nil)
+func getAllUsers(client *http.Client) {
+	req, err := http.NewRequest(http.GET, "http://localhost:8080/api/users", nil)
 	if err != nil {
 		log.Printf("❌ Failed to create get users request: %v", err)
 		return
@@ -154,9 +154,9 @@ func getAllUsers(client *http_go.Client) {
 	}
 }
 
-func getUserByID(client *http_go.Client, id int) {
+func getUserByID(client *http.Client, id int) {
 	url := fmt.Sprintf("http://localhost:8080/api/users/%d", id)
-	req, err := http_go.NewRequest(http_go.GET, url, nil)
+	req, err := http.NewRequest(http.GET, url, nil)
 	if err != nil {
 		log.Printf("❌ Failed to create get user request: %v", err)
 		return
@@ -189,20 +189,20 @@ func getUserByID(client *http_go.Client, id int) {
 	}
 }
 
-func createUser(client *http_go.Client, user CreateUserRequest) *User {
-	jsonData, err := http_go.MarshalJSON(user)
+func createUser(client *http.Client, user CreateUserRequest) *User {
+	jsonData, err := http.MarshalJSON(user)
 	if err != nil {
 		log.Printf("❌ Failed to marshal user data: %v", err)
 		return nil
 	}
 
-	req, err := http_go.NewRequest(http_go.POST, "http://localhost:8080/api/users", jsonData)
+	req, err := http.NewRequest(http.POST, "http://localhost:8080/api/users", jsonData)
 	if err != nil {
 		log.Printf("❌ Failed to create user request: %v", err)
 		return nil
 	}
 
-	req.Header.Set("Content-Type", http_go.ContentTypeJSON)
+	req.Header.Set("Content-Type", http.ContentTypeJSON)
 	req.Header.Set("Content-Length", fmt.Sprintf("%d", len(jsonData)))
 
 	resp, err := client.Send(req)
@@ -237,21 +237,21 @@ func createUser(client *http_go.Client, user CreateUserRequest) *User {
 	return nil
 }
 
-func updateUser(client *http_go.Client, id int, updateData User) {
-	jsonData, err := http_go.MarshalJSON(updateData)
+func updateUser(client *http.Client, id int, updateData User) {
+	jsonData, err := http.MarshalJSON(updateData)
 	if err != nil {
 		log.Printf("❌ Failed to marshal update data: %v", err)
 		return
 	}
 
 	url := fmt.Sprintf("http://localhost:8080/api/users/%d", id)
-	req, err := http_go.NewRequest(http_go.PUT, url, jsonData)
+	req, err := http.NewRequest(http.PUT, url, jsonData)
 	if err != nil {
 		log.Printf("❌ Failed to create update request: %v", err)
 		return
 	}
 
-	req.Header.Set("Content-Type", http_go.ContentTypeJSON)
+	req.Header.Set("Content-Type", http.ContentTypeJSON)
 	req.Header.Set("Content-Length", fmt.Sprintf("%d", len(jsonData)))
 
 	resp, err := client.Send(req)
@@ -279,9 +279,9 @@ func updateUser(client *http_go.Client, id int, updateData User) {
 	}
 }
 
-func deleteUser(client *http_go.Client, id int) {
+func deleteUser(client *http.Client, id int) {
 	url := fmt.Sprintf("http://localhost:8080/api/users/%d", id)
-	req, err := http_go.NewRequest(http_go.DELETE, url, nil)
+	req, err := http.NewRequest(http.DELETE, url, nil)
 	if err != nil {
 		log.Printf("❌ Failed to create delete request: %v", err)
 		return
@@ -306,8 +306,8 @@ func deleteUser(client *http_go.Client, id int) {
 	}
 }
 
-func getServerStats(client *http_go.Client) {
-	req, err := http_go.NewRequest(http_go.GET, "http://localhost:8080/api/stats", nil)
+func getServerStats(client *http.Client) {
+	req, err := http.NewRequest(http.GET, "http://localhost:8080/api/stats", nil)
 	if err != nil {
 		log.Printf("❌ Failed to create stats request: %v", err)
 		return

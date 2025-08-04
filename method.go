@@ -1,4 +1,4 @@
-package http_go
+package http
 
 type Method string
 
@@ -15,11 +15,23 @@ const (
 )
 
 func (m Method) IsValid() bool {
-	return m == GET || m == POST || m == PUT || m == DELETE || m == HEAD || m == OPTIONS || m == TRACE || m == CONNECT || m == PATCH
+	return m == GET ||
+		m == POST ||
+		m == PUT ||
+		m == DELETE ||
+		m == HEAD ||
+		m == OPTIONS ||
+		m == TRACE ||
+		m == CONNECT ||
+		m == PATCH
 }
 
 func (m Method) IsSafe() bool {
-	return m == GET || m == HEAD || m == OPTIONS || m == TRACE || m == CONNECT
+	return m == GET ||
+		m == HEAD ||
+		m == OPTIONS ||
+		m == TRACE ||
+		m == CONNECT
 }
 
 func (m Method) IsIdempotent() bool {

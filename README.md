@@ -37,17 +37,17 @@ import (
 
 func main() {
     // Create a new server
-    server := http_go.NewDefaultServer("localhost", 8080)
+    server := http.NewDefaultServer("localhost", 8080)
     
     // Add middleware
-    server.Use(http_go.Logger())
-    server.Use(http_go.CORS())
+    server.Use(http.Logger())
+    server.Use(http.CORS())
     
     // Register routes
-    http_go.Handle(http_go.GET, "/api/hello", func(req *http_go.Request) *http_go.Response {
-        return &http_go.Response{
+    http.Handle(http.GET, "/api/hello", func(req *http.Request) *http.Response {
+        return &http.Response{
             StatusCode: 200,
-            Header:     http_go.Header{"Content-Type": {http_go.ContentTypeJSON}},
+            Header:     http.Header{"Content-Type": {http.ContentTypeJSON}},
             Body:       []byte(`{"message": "Hello, World!"}`),
         }
     })
@@ -70,10 +70,10 @@ import (
 
 func main() {
     // Create HTTP client
-    client := &http_go.Client{Timeout: 10 * time.Second}
+    client := &http.Client{Timeout: 10 * time.Second}
     
     // Create request
-    req, err := http_go.NewRequest(http_go.GET, "http://localhost:8080/api/hello", nil)
+    req, err := http.NewRequest(http.GET, "http://localhost:8080/api/hello", nil)
     if err != nil {
         panic(err)
     }
@@ -96,10 +96,10 @@ func main() {
 
 ```go
 // Create a new server with default settings
-server := http_go.NewDefaultServer("localhost", 8080)
+server := http.NewDefaultServer("localhost", 8080)
 
 // Create a custom server
-server := &http_go.Server{
+server := &http.Server{
     Host: "0.0.0.0",
     Port: 3000,
     WriteTimeout: 30 * time.Second,
@@ -111,29 +111,29 @@ server := &http_go.Server{
 
 ```go
 // GET request
-http_go.Handle(http_go.GET, "/api/users", func(req *http_go.Request) *http_go.Response {
-    return &http_go.Response{
+http.Handle(http.GET, "/api/users", func(req *http.Request) *http.Response {
+    return &http.Response{
         StatusCode: 200,
         Body: []byte("Users list"),
     }
 })
 
 // POST request with JSON
-http_go.Handle(http_go.POST, "/api/users", func(req *http_go.Request) *http_go.Response {
+http.Handle(http.POST, "/api/users", func(req *http.Request) *http.Response {
     var user User
-    http_go.UnmarshalJSON(req.Body, &user)
+    http.UnmarshalJSON(req.Body, &user)
     
     // Process user...
     
-    return &http_go.Response{
+    return &http.Response{
         StatusCode: 201,
-        Header: http_go.Header{"Content-Type": {http_go.ContentTypeJSON}},
+        Header: http.Header{"Content-Type": {http.ContentTypeJSON}},
         Body: jsonData,
     }
 })
 
 // Path parameters
-http_go.Handle(http_go.GET, "/api/users/:id", func(req *http_go.Request) *http_go.Response {
+http.Handle(http.GET, "/api/users/:id", func(req *http.Request) *http.Response {
     id := req.PathValue("id")
     // Use id parameter...
 })
@@ -143,15 +143,15 @@ http_go.Handle(http_go.GET, "/api/users/:id", func(req *http_go.Request) *http_g
 
 ```go
 // Add middleware to server
-server.Use(http_go.Logger())
-server.Use(http_go.Recover())
-server.Use(http_go.CORS())
-server.Use(http_go.BasicAuth(users))
+server.Use(http.Logger())
+server.Use(http.Recover())
+server.Use(http.CORS())
+server.Use(http.BasicAuth(users))
 
 // Custom middleware
-func CustomMiddleware() http_go.MiddlewareFunc {
-    return func(next http_go.HandlerFunc) http_go.HandlerFunc {
-        return func(req *http_go.Request) *http_go.Response {
+func CustomMiddleware() http.MiddlewareFunc {
+    return func(next http.HandlerFunc) http.HandlerFunc {
+        return func(req *http.Request) *http.Response {
             // Pre-processing
             fmt.Printf("Request: %s %s\n", req.Method, req.Path)
             
@@ -172,16 +172,16 @@ func CustomMiddleware() http_go.MiddlewareFunc {
 #### Making Requests
 
 ```go
-client := &http_go.Client{Timeout: 10 * time.Second}
+client := &http.Client{Timeout: 10 * time.Second}
 
 // GET request
-req, err := http_go.NewRequest(http_go.GET, "http://api.example.com/users", nil)
+req, err := http.NewRequest(http.GET, "http://api.example.com/users", nil)
 resp, err := client.Send(req)
 
 // POST request with JSON
-jsonData, _ := http_go.MarshalJSON(user)
-req, err := http_go.NewRequest(http_go.POST, "http://api.example.com/users", jsonData)
-req.Header.Set("Content-Type", http_go.ContentTypeJSON)
+jsonData, _ := http.MarshalJSON(user)
+req, err := http.NewRequest(http.POST, "http://api.example.com/users", jsonData)
+req.Header.Set("Content-Type", http.ContentTypeJSON)
 resp, err := client.Send(req)
 
 // Parse JSON response
@@ -229,26 +229,26 @@ The examples demonstrate:
 
 #### Logger
 ```go
-server.Use(http_go.Logger())
+server.Use(http.Logger())
 ```
 Logs all requests with timing information.
 
 #### Recover
 ```go
-server.Use(http_go.Recover())
+server.Use(http.Recover())
 ```
 Recovers from panics and returns 500 errors.
 
 #### CORS
 ```go
-server.Use(http_go.CORS())
+server.Use(http.CORS())
 ```
 Adds CORS headers to all responses.
 
 #### BasicAuth
 ```go
 users := map[string]string{"admin": "password"}
-server.Use(http_go.BasicAuth(users))
+server.Use(http.BasicAuth(users))
 ```
 Adds HTTP Basic Authentication.
 
@@ -264,4 +264,46 @@ Run tests with verbose output:
 
 ```bash
 go test ./... -v
+```
+
+## 📊 Performance
+
+This library is designed for high performance and has been benchmarked against the official Go `net/http` package:
+
+### 🏆 **Benchmark Results vs Official Go HTTP**
+
+| Category | HTTP-Go | Official HTTP | Improvement |
+|----------|---------|---------------|-------------|
+| **JSON Processing** | 110,719 ns/op | 120,610 ns/op | **8.2% faster** |
+| **Memory Usage** | 659 B/op | 28,511 B/op | **97.7% less memory** |
+| **Header Operations** | 17.21 ns/op | 28.64 ns/op | **39.9% faster** |
+| **Response Creation** | 6.435 ns/op | 8.587 ns/op | **25.1% faster** |
+| **Allocation Count** | 14 allocs/op | 158 allocs/op | **91.1% fewer allocations** |
+
+### 🚀 **Performance Highlights**
+
+- **Memory Efficiency**: Up to **97.7% less memory usage**
+- **Faster Processing**: Up to **39.9% faster** in key operations
+- **Fewer Allocations**: Up to **91.1% fewer allocations**
+- **Zero-Cost Abstractions**: Minimal overhead for constants and basic operations
+
+### 📈 **Detailed Results**
+
+For comprehensive benchmark results, see [BENCHMARK_RESULTS.md](benchmark/BENCHMARK_RESULTS.md).
+
+**🏆 HTTP-Go wins in 13 out of 18 performance categories!**
+
+### 🧪 **Running Benchmarks**
+
+Run the benchmark suite:
+
+```bash
+# Quick benchmark summary
+./benchmark/run_benchmarks.sh
+
+# Detailed benchmark results
+go test ./benchmark -bench=. -benchmem
+
+# Run specific benchmarks
+go test ./benchmark -bench=BenchmarkJSONProcessing -benchmem
 ```

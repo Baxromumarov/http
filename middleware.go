@@ -1,4 +1,4 @@
-package http_go
+package http
 
 import (
 	"context"
@@ -146,13 +146,11 @@ func BasicAuth(users map[string]string) MiddlewareFunc {
 				}
 			}
 
-			// Store username in context for later use
 			if req.ctx == nil {
 				req.ctx = context.Background()
 			}
 			req.ctx = context.WithValue(req.ctx, "username", username)
 
-			// Authentication successful, continue to next handler
 			return next(req)
 		}
 	}

@@ -1,4 +1,4 @@
-package http_go
+package http
 
 import (
 	"bytes"
@@ -50,13 +50,12 @@ func (c *Client) Send(req *Request) (*Response, error) {
 
 	// req to raw HTTP request bytes
 	rawRequest := req.Raw()
-	fmt.Println("RAW REQUEST: ", len(rawRequest))
+
 	// Write the request bytes
-	n, err := tcpConn.Write(rawRequest)
+	_, err = tcpConn.Write(rawRequest)
 	if err != nil {
 		return nil, fmt.Errorf("error writing request: %w", err)
 	}
-	fmt.Println("WROTE: ", n)
 
 	// Read full response
 	var respBuf bytes.Buffer

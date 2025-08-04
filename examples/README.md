@@ -92,12 +92,12 @@ The client will demonstrate all the API endpoints:
 
 ### Backend Handler Example
 ```go
-http_go.Handle(http_go.GET, "/api/users/:id", func(req *http_go.Request) *http_go.Response {
+http.Handle(http.GET, "/api/users/:id", func(req *http.Request) *http.Response {
     idStr := req.PathValue("id")
     // ... handle request
-    return &http_go.Response{
+    return &http.Response{
         StatusCode: 200,
-        Header:     http_go.Header{"Content-Type": {http_go.ContentTypeJSON}},
+        Header:     http.Header{"Content-Type": {http.ContentTypeJSON}},
         Body:       jsonData,
     }
 })
@@ -105,7 +105,7 @@ http_go.Handle(http_go.GET, "/api/users/:id", func(req *http_go.Request) *http_g
 
 ### Client Request Example
 ```go
-req, err := http_go.NewRequest(http_go.GET, "http://localhost:8080/api/users", nil)
+req, err := http.NewRequest(http.GET, "http://localhost:8080/api/users", nil)
 resp, err := client.Send(req)
 var response Response
 resp.Unmarshal(&response)

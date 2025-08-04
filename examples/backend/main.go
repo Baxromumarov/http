@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	http_go "github.com/baxromumarov/http-go"
+	http "github.com/baxromumarov/http"
 )
 
 // User represents a user in our system
@@ -37,12 +37,12 @@ var nextID = 4
 
 func main() {
 	// Create a new server
-	server := http_go.NewDefaultServer("localhost", 8080)
+	server := http.NewDefaultServer("localhost", 8080)
 
 	// Add middleware
-	server.Use(http_go.Logger())
-	server.Use(http_go.Recover())
-	server.Use(http_go.CORS())
+	server.Use(http.Logger())
+	server.Use(http.Recover())
+	server.Use(http.CORS())
 
 	// Register routes
 	registerRoutes()
@@ -65,7 +65,7 @@ func main() {
 
 func registerRoutes() {
 	// Health check endpoint
-	http_go.Handle(http_go.GET, "/api/health", func(req *http_go.Request) *http_go.Response {
+	http.Handle(http.GET, "/api/health", func(req *http.Request) *http.Response {
 		response := Response{
 			Success: true,
 			Message: "Server is healthy",
@@ -75,16 +75,16 @@ func registerRoutes() {
 			},
 		}
 
-		jsonData, _ := http_go.MarshalJSON(response)
-		return &http_go.Response{
+		jsonData, _ := http.MarshalJSON(response)
+		return &http.Response{
 			StatusCode: 200,
-			Header:     http_go.Header{"Content-Type": {http_go.ContentTypeJSON}},
+			Header:     http.Header{"Content-Type": {http.ContentTypeJSON}},
 			Body:       jsonData,
 		}
 	})
 
 	// Get all users
-	http_go.Handle(http_go.GET, "/api/users", func(req *http_go.Request) *http_go.Response {
+	http.Handle(http.GET, "/api/users", func(req *http.Request) *http.Response {
 		userList := make([]User, 0, len(users))
 		for _, user := range users {
 			userList = append(userList, user)
@@ -96,16 +96,16 @@ func registerRoutes() {
 			Data:    userList,
 		}
 
-		jsonData, _ := http_go.MarshalJSON(response)
-		return &http_go.Response{
+		jsonData, _ := http.MarshalJSON(response)
+		return &http.Response{
 			StatusCode: 200,
-			Header:     http_go.Header{"Content-Type": {http_go.ContentTypeJSON}},
+			Header:     http.Header{"Content-Type": {http.ContentTypeJSON}},
 			Body:       jsonData,
 		}
 	})
 
 	// Get user by ID
-	http_go.Handle(http_go.GET, "/api/users/:id", func(req *http_go.Request) *http_go.Response {
+	http.Handle(http.GET, "/api/users/:id", func(req *http.Request) *http.Response {
 		idStr := req.PathValue("id")
 		id, err := strconv.Atoi(idStr)
 		if err != nil {
@@ -113,10 +113,10 @@ func registerRoutes() {
 				Success: false,
 				Error:   "Invalid user ID",
 			}
-			jsonData, _ := http_go.MarshalJSON(response)
-			return &http_go.Response{
+			jsonData, _ := http.MarshalJSON(response)
+			return &http.Response{
 				StatusCode: 400,
-				Header:     http_go.Header{"Content-Type": {http_go.ContentTypeJSON}},
+				Header:     http.Header{"Content-Type": {http.ContentTypeJSON}},
 				Body:       jsonData,
 			}
 		}
@@ -127,10 +127,10 @@ func registerRoutes() {
 				Success: false,
 				Error:   fmt.Sprintf("User with ID %d not found", id),
 			}
-			jsonData, _ := http_go.MarshalJSON(response)
-			return &http_go.Response{
+			jsonData, _ := http.MarshalJSON(response)
+			return &http.Response{
 				StatusCode: 404,
-				Header:     http_go.Header{"Content-Type": {http_go.ContentTypeJSON}},
+				Header:     http.Header{"Content-Type": {http.ContentTypeJSON}},
 				Body:       jsonData,
 			}
 		}
@@ -141,26 +141,26 @@ func registerRoutes() {
 			Data:    user,
 		}
 
-		jsonData, _ := http_go.MarshalJSON(response)
-		return &http_go.Response{
+		jsonData, _ := http.MarshalJSON(response)
+		return &http.Response{
 			StatusCode: 200,
-			Header:     http_go.Header{"Content-Type": {http_go.ContentTypeJSON}},
+			Header:     http.Header{"Content-Type": {http.ContentTypeJSON}},
 			Body:       jsonData,
 		}
 	})
 
 	// Create new user
-	http_go.Handle(http_go.POST, "/api/users", func(req *http_go.Request) *http_go.Response {
+	http.Handle(http.POST, "/api/users", func(req *http.Request) *http.Response {
 		var newUser User
-		if err := http_go.UnmarshalJSON(req.Body, &newUser); err != nil {
+		if err := http.UnmarshalJSON(req.Body, &newUser); err != nil {
 			response := Response{
 				Success: false,
 				Error:   "Invalid JSON data",
 			}
-			jsonData, _ := http_go.MarshalJSON(response)
-			return &http_go.Response{
+			jsonData, _ := http.MarshalJSON(response)
+			return &http.Response{
 				StatusCode: 400,
-				Header:     http_go.Header{"Content-Type": {http_go.ContentTypeJSON}},
+				Header:     http.Header{"Content-Type": {http.ContentTypeJSON}},
 				Body:       jsonData,
 			}
 		}
@@ -171,10 +171,10 @@ func registerRoutes() {
 				Success: false,
 				Error:   "Name and email are required",
 			}
-			jsonData, _ := http_go.MarshalJSON(response)
-			return &http_go.Response{
+			jsonData, _ := http.MarshalJSON(response)
+			return &http.Response{
 				StatusCode: 400,
-				Header:     http_go.Header{"Content-Type": {http_go.ContentTypeJSON}},
+				Header:     http.Header{"Content-Type": {http.ContentTypeJSON}},
 				Body:       jsonData,
 			}
 		}
@@ -191,16 +191,16 @@ func registerRoutes() {
 			Data:    newUser,
 		}
 
-		jsonData, _ := http_go.MarshalJSON(response)
-		return &http_go.Response{
+		jsonData, _ := http.MarshalJSON(response)
+		return &http.Response{
 			StatusCode: 201,
-			Header:     http_go.Header{"Content-Type": {http_go.ContentTypeJSON}},
+			Header:     http.Header{"Content-Type": {http.ContentTypeJSON}},
 			Body:       jsonData,
 		}
 	})
 
 	// Update user
-	http_go.Handle(http_go.PUT, "/api/users/:id", func(req *http_go.Request) *http_go.Response {
+	http.Handle(http.PUT, "/api/users/:id", func(req *http.Request) *http.Response {
 		idStr := req.PathValue("id")
 		id, err := strconv.Atoi(idStr)
 		if err != nil {
@@ -208,10 +208,10 @@ func registerRoutes() {
 				Success: false,
 				Error:   "Invalid user ID",
 			}
-			jsonData, _ := http_go.MarshalJSON(response)
-			return &http_go.Response{
+			jsonData, _ := http.MarshalJSON(response)
+			return &http.Response{
 				StatusCode: 400,
-				Header:     http_go.Header{"Content-Type": {http_go.ContentTypeJSON}},
+				Header:     http.Header{"Content-Type": {http.ContentTypeJSON}},
 				Body:       jsonData,
 			}
 		}
@@ -222,24 +222,24 @@ func registerRoutes() {
 				Success: false,
 				Error:   fmt.Sprintf("User with ID %d not found", id),
 			}
-			jsonData, _ := http_go.MarshalJSON(response)
-			return &http_go.Response{
+			jsonData, _ := http.MarshalJSON(response)
+			return &http.Response{
 				StatusCode: 404,
-				Header:     http_go.Header{"Content-Type": {http_go.ContentTypeJSON}},
+				Header:     http.Header{"Content-Type": {http.ContentTypeJSON}},
 				Body:       jsonData,
 			}
 		}
 
 		var updateData User
-		if err := http_go.UnmarshalJSON(req.Body, &updateData); err != nil {
+		if err := http.UnmarshalJSON(req.Body, &updateData); err != nil {
 			response := Response{
 				Success: false,
 				Error:   "Invalid JSON data",
 			}
-			jsonData, _ := http_go.MarshalJSON(response)
-			return &http_go.Response{
+			jsonData, _ := http.MarshalJSON(response)
+			return &http.Response{
 				StatusCode: 400,
-				Header:     http_go.Header{"Content-Type": {http_go.ContentTypeJSON}},
+				Header:     http.Header{"Content-Type": {http.ContentTypeJSON}},
 				Body:       jsonData,
 			}
 		}
@@ -263,16 +263,16 @@ func registerRoutes() {
 			Data:    existingUser,
 		}
 
-		jsonData, _ := http_go.MarshalJSON(response)
-		return &http_go.Response{
+		jsonData, _ := http.MarshalJSON(response)
+		return &http.Response{
 			StatusCode: 200,
-			Header:     http_go.Header{"Content-Type": {http_go.ContentTypeJSON}},
+			Header:     http.Header{"Content-Type": {http.ContentTypeJSON}},
 			Body:       jsonData,
 		}
 	})
 
 	// Delete user
-	http_go.Handle(http_go.DELETE, "/api/users/:id", func(req *http_go.Request) *http_go.Response {
+	http.Handle(http.DELETE, "/api/users/:id", func(req *http.Request) *http.Response {
 		idStr := req.PathValue("id")
 		id, err := strconv.Atoi(idStr)
 		if err != nil {
@@ -280,10 +280,10 @@ func registerRoutes() {
 				Success: false,
 				Error:   "Invalid user ID",
 			}
-			jsonData, _ := http_go.MarshalJSON(response)
-			return &http_go.Response{
+			jsonData, _ := http.MarshalJSON(response)
+			return &http.Response{
 				StatusCode: 400,
-				Header:     http_go.Header{"Content-Type": {http_go.ContentTypeJSON}},
+				Header:     http.Header{"Content-Type": {http.ContentTypeJSON}},
 				Body:       jsonData,
 			}
 		}
@@ -294,10 +294,10 @@ func registerRoutes() {
 				Success: false,
 				Error:   fmt.Sprintf("User with ID %d not found", id),
 			}
-			jsonData, _ := http_go.MarshalJSON(response)
-			return &http_go.Response{
+			jsonData, _ := http.MarshalJSON(response)
+			return &http.Response{
 				StatusCode: 404,
-				Header:     http_go.Header{"Content-Type": {http_go.ContentTypeJSON}},
+				Header:     http.Header{"Content-Type": {http.ContentTypeJSON}},
 				Body:       jsonData,
 			}
 		}
@@ -310,16 +310,16 @@ func registerRoutes() {
 			Message: fmt.Sprintf("User with ID %d deleted successfully", id),
 		}
 
-		jsonData, _ := http_go.MarshalJSON(response)
-		return &http_go.Response{
+		jsonData, _ := http.MarshalJSON(response)
+		return &http.Response{
 			StatusCode: 200,
-			Header:     http_go.Header{"Content-Type": {http_go.ContentTypeJSON}},
+			Header:     http.Header{"Content-Type": {http.ContentTypeJSON}},
 			Body:       jsonData,
 		}
 	})
 
 	// Get server statistics
-	http_go.Handle(http_go.GET, "/api/stats", func(req *http_go.Request) *http_go.Response {
+	http.Handle(http.GET, "/api/stats", func(req *http.Request) *http.Response {
 		stats := map[string]interface{}{
 			"total_users": len(users),
 			"server_time": time.Now().Format(time.RFC3339),
@@ -332,10 +332,10 @@ func registerRoutes() {
 			Data:    stats,
 		}
 
-		jsonData, _ := http_go.MarshalJSON(response)
-		return &http_go.Response{
+		jsonData, _ := http.MarshalJSON(response)
+		return &http.Response{
 			StatusCode: 200,
-			Header:     http_go.Header{"Content-Type": {http_go.ContentTypeJSON}},
+			Header:     http.Header{"Content-Type": {http.ContentTypeJSON}},
 			Body:       jsonData,
 		}
 	})

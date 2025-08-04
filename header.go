@@ -1,4 +1,6 @@
-package http_go
+// just simple map functions, nothing fancy
+// GET, SET, DELETE, VALUES, LEN, KEYS, CLONE, EXISTS
+package http
 
 type Header map[string][]string
 

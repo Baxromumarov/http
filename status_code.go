@@ -1,4 +1,4 @@
-package http_go
+package http
 
 const (
 	StatusContinue           = 100
