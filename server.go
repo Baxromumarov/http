@@ -32,7 +32,7 @@ type Server struct {
 	DisableNagle bool // https://en.wikipedia.org/wiki/Nagle%27s_algorithm
 	conn         map[string]struct{}
 	mu           sync.Mutex // for conn, currently only full locking is used, in v2 it will be extended
-	middleware   []HandlerFunc
+	middleware   []MiddlewareFunc
 }
 
 func (s *Server) StartServer() error {
@@ -268,7 +268,7 @@ func (s *Server) processRequest(req *Request) *Response {
 	handlerChain := s.createHandlerChain(handler)
 
 	// Execute the handler chain
-	resp := handlerChain(req, params, nil)
+	resp := handlerChain(req)
 
 	// Ensure response has required headers
 	s.ensureResponseHeaders(resp)
@@ -279,7 +279,7 @@ func (s *Server) processRequest(req *Request) *Response {
 // createHandlerChain creates the middleware chain
 func (s *Server) createHandlerChain(handler HandlerFunc) HandlerFunc {
 	// Start with the route handler
-	var handlerChain HandlerFunc = func(req *Request, params map[string]string, next HandlerFunc) *Response {
+	var handlerChain HandlerFunc = func(req *Request) *Response {
 		if handler == nil {
 			return &Response{
 				StatusCode: 404,
@@ -287,16 +287,13 @@ func (s *Server) createHandlerChain(handler HandlerFunc) HandlerFunc {
 				Body:       []byte("404 Not found"),
 			}
 		}
-		return handler(req, params, nil)
+		return handler(req)
 	}
 
 	// Apply middleware in reverse order
 	for i := len(s.middleware) - 1; i >= 0; i-- {
 		mw := s.middleware[i]
-		next := handlerChain
-		handlerChain = func(req *Request, params map[string]string, _ HandlerFunc) *Response {
-			return mw(req, params, next)
-		}
+		handlerChain = mw(handlerChain)
 	}
 
 	return handlerChain
@@ -317,7 +314,10 @@ func (s *Server) ensureResponseHeaders(resp *Response) {
 }
 
 // HandlerFunc is a function that takes a request and returns a response
-type HandlerFunc func(req *Request, params map[string]string, next HandlerFunc) *Response
+type HandlerFunc func(req *Request) *Response
+
+// MiddlewareFunc is a function that wraps a handler with additional functionality
+type MiddlewareFunc func(HandlerFunc) HandlerFunc
 
 var routes = map[Method][]route{}
 

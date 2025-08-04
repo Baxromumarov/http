@@ -15,7 +15,7 @@ func TestLogger(t *testing.T) {
 	}
 
 	// Create a test handler
-	testHandler := func(req *Request, params map[string]string, next HandlerFunc) *Response {
+	testHandler := func(req *Request) *Response {
 		return &Response{
 			StatusCode: 200,
 			Body:       []byte("test response"),
@@ -23,10 +23,11 @@ func TestLogger(t *testing.T) {
 	}
 
 	// Apply logger middleware
-	loggerHandler := Logger()
+	loggerMiddleware := Logger()
+	loggerHandler := loggerMiddleware(testHandler)
 
 	// Execute the handler
-	resp := loggerHandler(req, nil, testHandler)
+	resp := loggerHandler(req)
 
 	// Check that response is correct
 	if resp.StatusCode != 200 {
@@ -46,15 +47,16 @@ func TestRecover(t *testing.T) {
 	}
 
 	// Create a handler that panics
-	panicHandler := func(req *Request, params map[string]string, next HandlerFunc) *Response {
+	panicHandler := func(req *Request) *Response {
 		panic("test panic")
 	}
 
 	// Apply recover middleware
-	recoverHandler := Recover()
+	recoverMiddleware := Recover()
+	recoverHandler := recoverMiddleware(panicHandler)
 
 	// Execute the handler - should not panic
-	resp := recoverHandler(req, nil, panicHandler)
+	resp := recoverHandler(req)
 
 	// Check that we get a 500 response
 	if resp.StatusCode != 500 {
@@ -74,7 +76,7 @@ func TestCORS(t *testing.T) {
 	}
 
 	// Create a test handler
-	testHandler := func(req *Request, params map[string]string, next HandlerFunc) *Response {
+	testHandler := func(req *Request) *Response {
 		return &Response{
 			StatusCode: 200,
 			Body:       []byte("test response"),
@@ -82,10 +84,11 @@ func TestCORS(t *testing.T) {
 	}
 
 	// Apply CORS middleware
-	corsHandler := CORS()
+	corsMiddleware := CORS()
+	corsHandler := corsMiddleware(testHandler)
 
 	// Execute the handler
-	resp := corsHandler(req, nil, testHandler)
+	resp := corsHandler(req)
 
 	// Check that CORS headers are set
 	if resp.Header.Get("Access-Control-Allow-Origin") != "*" {
@@ -154,7 +157,7 @@ func TestBasicAuth(t *testing.T) {
 			}
 
 			// Create a test handler
-			testHandler := func(req *Request, params map[string]string, next HandlerFunc) *Response {
+			testHandler := func(req *Request) *Response {
 				return &Response{
 					StatusCode: 200,
 					Body:       []byte("authenticated"),
@@ -163,10 +166,11 @@ func TestBasicAuth(t *testing.T) {
 
 			// Apply BasicAuth middleware
 			users := map[string]string{"admin": "password"}
-			authHandler := BasicAuth(users)
+			authMiddleware := BasicAuth(users)
+			authHandler := authMiddleware(testHandler)
 
 			// Execute the handler
-			resp := authHandler(req, nil, testHandler)
+			resp := authHandler(req)
 
 			// Check response status
 			if resp.StatusCode != tt.expectedStatus {
@@ -192,7 +196,7 @@ func TestMiddlewareChain(t *testing.T) {
 	}
 
 	// Create a test handler
-	testHandler := func(req *Request, params map[string]string, next HandlerFunc) *Response {
+	testHandler := func(req *Request) *Response {
 		return &Response{
 			StatusCode: 200,
 			Body:       []byte("test response"),
@@ -200,16 +204,13 @@ func TestMiddlewareChain(t *testing.T) {
 	}
 
 	// Apply multiple middleware
-	loggerHandler := Logger()
-	recoverHandler := Recover()
-	corsHandler := CORS()
+	loggerMiddleware := Logger()
+	recoverMiddleware := Recover()
+	corsMiddleware := CORS()
 
 	// Execute the handler chain
-	resp := loggerHandler(req, nil, func(req *Request, params map[string]string, next HandlerFunc) *Response {
-		return recoverHandler(req, params, func(req *Request, params map[string]string, next HandlerFunc) *Response {
-			return corsHandler(req, params, testHandler)
-		})
-	})
+	handler := loggerMiddleware(recoverMiddleware(corsMiddleware(testHandler)))
+	resp := handler(req)
 
 	// Check that response is correct
 	if resp.StatusCode != 200 {
@@ -234,21 +235,18 @@ func TestMiddlewareWithPanic(t *testing.T) {
 	}
 
 	// Create a handler that panics
-	panicHandler := func(req *Request, params map[string]string, next HandlerFunc) *Response {
+	panicHandler := func(req *Request) *Response {
 		panic("test panic")
 	}
 
 	// Apply middleware chain with panic handler
-	loggerHandler := Logger()
-	recoverHandler := Recover()
-	corsHandler := CORS()
+	loggerMiddleware := Logger()
+	recoverMiddleware := Recover()
+	corsMiddleware := CORS()
 
 	// Execute the handler - should not panic
-	resp := loggerHandler(req, nil, func(req *Request, params map[string]string, next HandlerFunc) *Response {
-		return recoverHandler(req, params, func(req *Request, params map[string]string, next HandlerFunc) *Response {
-			return corsHandler(req, params, panicHandler)
-		})
-	})
+	handler := loggerMiddleware(recoverMiddleware(corsMiddleware(panicHandler)))
+	resp := handler(req)
 
 	// Check that we get a 500 response
 	if resp.StatusCode != 500 {
@@ -269,11 +267,17 @@ func TestCORS_OptionsRequest(t *testing.T) {
 		Header: make(Header),
 	}
 
+	// Create a dummy handler
+	dummyHandler := func(req *Request) *Response {
+		return &Response{StatusCode: 200}
+	}
+
 	// Apply CORS middleware
-	corsHandler := CORS()
+	corsMiddleware := CORS()
+	corsHandler := corsMiddleware(dummyHandler)
 
 	// Execute the handler
-	resp := corsHandler(req, nil, nil)
+	resp := corsHandler(req)
 
 	// Check that we get a 204 response for preflight
 	if resp.StatusCode != 204 {
@@ -299,7 +303,7 @@ func TestBasicAuth_Context(t *testing.T) {
 	req.Header.Set("Authorization", "Basic YWRtaW46cGFzc3dvcmQ=") // admin:password
 
 	// Create a test handler that checks context
-	testHandler := func(req *Request, params map[string]string, next HandlerFunc) *Response {
+	testHandler := func(req *Request) *Response {
 		username := req.Context().Value("username")
 		if username != "admin" {
 			t.Errorf("Expected username 'admin' in context, got %v", username)
@@ -312,10 +316,11 @@ func TestBasicAuth_Context(t *testing.T) {
 
 	// Apply BasicAuth middleware
 	users := map[string]string{"admin": "password"}
-	authHandler := BasicAuth(users)
+	authMiddleware := BasicAuth(users)
+	authHandler := authMiddleware(testHandler)
 
 	// Execute the handler
-	resp := authHandler(req, nil, testHandler)
+	resp := authHandler(req)
 
 	// Check response
 	if resp.StatusCode != 200 {

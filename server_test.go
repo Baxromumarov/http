@@ -157,15 +157,15 @@ func TestMatchRoute(t *testing.T) {
 	routes = make(map[Method][]route)
 
 	// Register test routes
-	Handle(GET, "/api/users", func(req *Request, params map[string]string, next HandlerFunc) *Response {
+	Handle(GET, "/api/users", func(req *Request) *Response {
 		return &Response{StatusCode: 200, Body: []byte("users list")}
 	})
 
-	Handle(GET, "/api/users/:id", func(req *Request, params map[string]string, next HandlerFunc) *Response {
-		return &Response{StatusCode: 200, Body: []byte("user " + params["id"])}
+	Handle(GET, "/api/users/:id", func(req *Request) *Response {
+		return &Response{StatusCode: 200, Body: []byte("user " + req.PathValue("id"))}
 	})
 
-	Handle(POST, "/api/users", func(req *Request, params map[string]string, next HandlerFunc) *Response {
+	Handle(POST, "/api/users", func(req *Request) *Response {
 		return &Response{StatusCode: 201, Body: []byte("user created")}
 	})
 
@@ -225,7 +225,8 @@ func TestMatchRoute(t *testing.T) {
 
 				// Create a mock request
 				req := &Request{Method: tt.method, Path: tt.path}
-				resp := handler(req, params, nil)
+				req.pathParams = params
+				resp := handler(req)
 
 				if string(resp.Body) != tt.expected {
 					t.Errorf("Expected response '%s', got '%s'", tt.expected, string(resp.Body))
@@ -466,7 +467,7 @@ func TestServer_ProcessRequest(t *testing.T) {
 	routes = make(map[Method][]route)
 
 	// Register a test route
-	Handle(GET, "/api/test", func(req *Request, params map[string]string, next HandlerFunc) *Response {
+	Handle(GET, "/api/test", func(req *Request) *Response {
 		return &Response{
 			StatusCode: 200,
 			Header:     Header{"Content-Type": {"application/json"}},
@@ -519,7 +520,7 @@ func TestServer_CreateHandlerChain(t *testing.T) {
 	server := NewDefaultServer("localhost", 8080)
 
 	// Create a test handler
-	testHandler := func(req *Request, params map[string]string, next HandlerFunc) *Response {
+	testHandler := func(req *Request) *Response {
 		return &Response{StatusCode: 200, Body: []byte("test response")}
 	}
 
@@ -531,7 +532,7 @@ func TestServer_CreateHandlerChain(t *testing.T) {
 
 	// Test the handler chain
 	req := &Request{Method: GET, Path: "/test"}
-	resp := handlerChain(req, nil, nil)
+	resp := handlerChain(req)
 
 	if resp.StatusCode != 200 {
 		t.Errorf("Expected status 200, got %d", resp.StatusCode)

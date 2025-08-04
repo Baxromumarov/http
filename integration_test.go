@@ -12,7 +12,7 @@ func TestIntegration_ServerAndClient(t *testing.T) {
 	server := NewDefaultServer("localhost", 0) // Use port 0 to get a random available port
 
 	// Register test routes
-	Handle(GET, "/api/test", func(req *Request, params map[string]string, next HandlerFunc) *Response {
+	Handle(GET, "/api/test", func(req *Request) *Response {
 		return &Response{
 			StatusCode: 200,
 			Header:     Header{"Content-Type": {ContentTypeJSON}},
@@ -20,7 +20,7 @@ func TestIntegration_ServerAndClient(t *testing.T) {
 		}
 	})
 
-	Handle(POST, "/api/test", func(req *Request, params map[string]string, next HandlerFunc) *Response {
+	Handle(POST, "/api/test", func(req *Request) *Response {
 		return &Response{
 			StatusCode: 201,
 			Header:     Header{"Content-Type": {ContentTypeJSON}},
@@ -28,8 +28,8 @@ func TestIntegration_ServerAndClient(t *testing.T) {
 		}
 	})
 
-	Handle(GET, "/api/users/:id", func(req *Request, params map[string]string, next HandlerFunc) *Response {
-		userID := params["id"]
+	Handle(GET, "/api/users/:id", func(req *Request) *Response {
+		userID := req.PathValue("id")
 		return &Response{
 			StatusCode: 200,
 			Header:     Header{"Content-Type": {ContentTypeJSON}},
@@ -174,8 +174,11 @@ func TestIntegration_Middleware(t *testing.T) {
 	// Start a test server with middleware
 	server := NewDefaultServer("localhost", 0)
 
+	// Add middleware to the server
+	server.Use(CORS())
+
 	// Create a handler that returns user info
-	userHandler := func(req *Request, params map[string]string, next HandlerFunc) *Response {
+	userHandler := func(req *Request) *Response {
 		username := req.Context().Value("username")
 		return &Response{
 			StatusCode: 200,
@@ -185,19 +188,7 @@ func TestIntegration_Middleware(t *testing.T) {
 	}
 
 	// Register the handler with middleware
-	Handle(GET, "/api/user", func(req *Request, params map[string]string, next HandlerFunc) *Response {
-		// Apply middleware chain
-		loggerHandler := Logger()
-		recoverHandler := Recover()
-		corsHandler := CORS()
-
-		// Execute middleware chain
-		return loggerHandler(req, params, func(req *Request, params map[string]string, next HandlerFunc) *Response {
-			return recoverHandler(req, params, func(req *Request, params map[string]string, next HandlerFunc) *Response {
-				return corsHandler(req, params, userHandler)
-			})
-		})
-	})
+	Handle(GET, "/api/user", userHandler)
 
 	// Start server
 	listener, err := net.Listen("tcp", "localhost:0")
@@ -260,7 +251,7 @@ func TestIntegration_LargeRequest(t *testing.T) {
 	server := NewDefaultServer("localhost", 0)
 
 	// Register handler that echoes back the request body
-	Handle(POST, "/api/echo", func(req *Request, params map[string]string, next HandlerFunc) *Response {
+	Handle(POST, "/api/echo", func(req *Request) *Response {
 		return &Response{
 			StatusCode: 200,
 			Header:     Header{"Content-Type": {ContentTypeJSON}},
@@ -335,7 +326,7 @@ func TestIntegration_ConcurrentRequests(t *testing.T) {
 	server := NewDefaultServer("localhost", 0)
 
 	// Register a simple handler
-	Handle(GET, "/api/test", func(req *Request, params map[string]string, next HandlerFunc) *Response {
+	Handle(GET, "/api/test", func(req *Request) *Response {
 		return &Response{
 			StatusCode: 200,
 			Header:     Header{"Content-Type": {ContentTypeJSON}},
