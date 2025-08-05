@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+const defaultTimeout = 30 * time.Second
+
 // Client Request
 type Client struct {
 	Timeout time.Duration
@@ -29,7 +31,7 @@ func (c *Client) Send(req *Request) (*Response, error) {
 	}()
 
 	if c.Timeout == 0 {
-		c.Timeout = 30 * time.Second
+		c.Timeout = defaultTimeout
 	}
 
 	hostPort := net.JoinHostPort(req.URL.Hostname(), req.URL.Port())

@@ -58,15 +58,15 @@ func (s *Server) StartServer() error {
 
 func (s *Server) timeoutHandler(conn net.Conn) error {
 	if s.ReadTimeout == 0 {
-		s.ReadTimeout = 1 * time.Minute
+		s.ReadTimeout = defaultTimeout
 	}
 
 	if s.WriteTimeout == 0 {
-		s.WriteTimeout = 1 * time.Minute
+		s.WriteTimeout = defaultTimeout
 	}
 
 	if s.IdleTimeout == 0 {
-		s.IdleTimeout = 1 * time.Minute
+		s.IdleTimeout = defaultTimeout
 	}
 
 	if err := conn.SetReadDeadline(time.Now().Add(s.ReadTimeout)); err != nil {
@@ -177,7 +177,7 @@ func (s *Server) readHeaders(conn net.Conn) ([]byte, []byte, error) {
 		n, err := conn.Read(tmp)
 		if n > 0 {
 			headerBuf.Write(tmp[:n])
-			if strings.Contains(headerBuf.String(), "\r\n\r\n") {
+			if strings.Contains(headerBuf.String(), string(doubleCRLF)) {
 				break
 			}
 		}
