@@ -48,7 +48,7 @@ func main() {
 ```
 
 
-## 📚 API Reference
+## API Reference
 
 ### Server
 
@@ -153,6 +153,4 @@ Adds CORS headers to all responses.
 ```go
 users := map[string]string{"admin": "password"}
 server.Use(http.BasicAuth(users))
-```
-Adds HTTP Basic Authentication.
 ```
