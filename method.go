@@ -35,7 +35,14 @@ func (m Method) IsSafe() bool {
 }
 
 func (m Method) IsIdempotent() bool {
-	return m == GET || m == HEAD || m == PUT || m == DELETE || m == OPTIONS || m == TRACE || m == CONNECT || m == PATCH
+	return m == GET ||
+		m == HEAD ||
+		m == PUT ||
+		m == DELETE ||
+		m == OPTIONS ||
+		m == TRACE ||
+		m == CONNECT ||
+		m == PATCH
 }
 
 func (m Method) String() string {

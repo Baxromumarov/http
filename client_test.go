@@ -288,7 +288,7 @@ func TestResponse_Unmarshal_InvalidJSON(t *testing.T) {
 		Body: []byte(`{"name": "John", "age": 30, "active": true`), // Missing closing brace
 	}
 
-	var data map[string]interface{}
+	var data map[string]any
 
 	err := resp.Unmarshal(&data)
 	if err == nil {
@@ -346,15 +346,15 @@ func TestClient_DefaultTimeout(t *testing.T) {
 		t.Fatalf("Failed to create request: %v", err)
 	}
 
-	// The Send method should set a default timeout
+	// The Send method should use a default timeout internally
 	_, err = client.Send(req)
 	if err == nil {
 		t.Errorf("Expected error, got none")
 	}
 
-	// After Send, timeout should be set
-	if client.Timeout == 0 {
-		t.Errorf("Expected timeout to be set after Send, got %v", client.Timeout)
+	// Timeout on the client struct should remain unchanged
+	if client.Timeout != 0 {
+		t.Errorf("Expected timeout to remain 0 on struct, got %v", client.Timeout)
 	}
 }
 
@@ -377,7 +377,8 @@ func TestRequest_WithHeaders(t *testing.T) {
 	expectedHeaders := []string{
 		"Content-Type: application/json",
 		"Authorization: Bearer token123",
-		"Accept: application/json, text/plain",
+		"Accept: application/json",
+		"Accept: text/plain",
 	}
 
 	for _, header := range expectedHeaders {
@@ -430,5 +431,54 @@ func TestRequest_WithLargeBody(t *testing.T) {
 	body := raw[bodyStart+4:]
 	if !bytes.Equal(body, largeBody) {
 		t.Errorf("Body in raw request doesn't match original body")
+	}
+}
+
+func TestClient_DefaultPort_HTTP(t *testing.T) {
+	req, err := NewRequest(GET, "http://example.com/path", nil)
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+
+	raw := req.Raw()
+	if !bytes.Contains(raw, []byte("Host: example.com")) {
+		t.Errorf("Raw request should contain Host without explicit port: %s", string(raw))
+	}
+}
+
+func TestClient_DefaultPort_HTTPS(t *testing.T) {
+	req, err := NewRequest(GET, "https://example.com/path", nil)
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+
+	raw := req.Raw()
+	if !bytes.Contains(raw, []byte("Host: example.com")) {
+		t.Errorf("Raw request should contain Host without explicit port: %s", string(raw))
+	}
+}
+
+func TestRequest_Raw_AutoContentLength(t *testing.T) {
+	req, err := NewRequest(POST, "http://localhost:8080/api", []byte(`{"test": "data"}`))
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+
+	raw := req.Raw()
+	if !bytes.Contains(raw, []byte("Content-Length: 16")) {
+		t.Errorf("Raw request should auto-set Content-Length: %s", string(raw))
+	}
+}
+
+func TestRequest_Raw_HeaderInjectionBlocked(t *testing.T) {
+	req, err := NewRequest(GET, "http://localhost:8080/api", nil)
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+
+	req.Header.Set("X-Evil", "evil\r\nInjected: header")
+	raw := req.Raw()
+	if bytes.Contains(raw, []byte("Injected:")) {
+		t.Errorf("Header injection should be blocked in Raw()")
 	}
 }

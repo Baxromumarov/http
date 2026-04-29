@@ -1,23 +1,12 @@
-# 🚀 HTTP-Go: A Simple and Fast HTTP Library for Go
+# HTTP-Go: A Simple and Fast HTTP Library for Go
 
-A lightweight, high-performance HTTP library for Go that provides a clean and simple API for building HTTP servers and clients. Built from scratch with zero external dependencies.
-
+HTTP library built from scratch with zero external (for learning purpose)
 [![Go Version](https://img.shields.io/badge/Go-1.19+-blue.svg)](https://golang.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/Tests-Passing-brightgreen.svg)](https://github.com/baxromumarov/http-go)
 
-## ✨ Features
 
-- 🎯 **Simple API**: Clean, intuitive handler functions
-- ⚡ **High Performance**: Built for speed and efficiency
-- 🔧 **Middleware Support**: Logger, Recover, CORS, and BasicAuth
-- 🛣️ **Dynamic Routing**: Path parameters and flexible route matching
-- 📦 **Zero Dependencies**: No external packages required
-- 🔒 **Type Safe**: Full Go type safety and compile-time checks
-- 🧪 **Well Tested**: Comprehensive test coverage
-- 📚 **Complete Examples**: Backend and client examples included
-
-## 🚀 Quick Start
+##  Quick Start
 
 ### Installation
 
@@ -58,35 +47,6 @@ func main() {
 }
 ```
 
-### Simple Client Example
-
-```go
-package main
-
-import (
-    "fmt"
-    "github.com/baxromumarov/http-go"
-)
-
-func main() {
-    // Create HTTP client
-    client := &http.Client{Timeout: 10 * time.Second}
-    
-    // Create request
-    req, err := http.NewRequest(http.GET, "http://localhost:8080/api/hello", nil)
-    if err != nil {
-        panic(err)
-    }
-    
-    // Send request
-    resp, err := client.Send(req)
-    if err != nil {
-        panic(err)
-    }
-    
-    fmt.Printf("Response: %s\n", string(resp.Body))
-}
-```
 
 ## 📚 API Reference
 
@@ -167,63 +127,7 @@ func CustomMiddleware() http.MiddlewareFunc {
 }
 ```
 
-### Client
-
-#### Making Requests
-
-```go
-client := &http.Client{Timeout: 10 * time.Second}
-
-// GET request
-req, err := http.NewRequest(http.GET, "http://api.example.com/users", nil)
-resp, err := client.Send(req)
-
-// POST request with JSON
-jsonData, _ := http.MarshalJSON(user)
-req, err := http.NewRequest(http.POST, "http://api.example.com/users", jsonData)
-req.Header.Set("Content-Type", http.ContentTypeJSON)
-resp, err := client.Send(req)
-
-// Parse JSON response
-var response Response
-resp.Unmarshal(&response)
-```
-
-## 🏗️ Examples
-
-### Complete Backend and Client
-
-Check out the `examples/` directory for a complete REST API implementation:
-
-```bash
-# Start the backend server
-cd examples/backend
-go run main.go
-
-# In another terminal, run the client demo
-cd examples/client
-go run main.go
-```
-
-The examples demonstrate:
-- ✅ Complete CRUD operations
-- ✅ Middleware usage
-- ✅ Path parameters
-- ✅ JSON handling
-- ✅ Error handling
-- ✅ Client-server communication
-
-### Available Endpoints
-
-- `GET /api/health` - Health check
-- `GET /api/users` - List all users
-- `GET /api/users/:id` - Get user by ID
-- `POST /api/users` - Create new user
-- `PUT /api/users/:id` - Update user
-- `DELETE /api/users/:id` - Delete user
-- `GET /api/stats` - Get server statistics
-
-## 🔧 Middleware
+## Middleware
 
 ### Built-in Middleware
 
@@ -251,59 +155,4 @@ users := map[string]string{"admin": "password"}
 server.Use(http.BasicAuth(users))
 ```
 Adds HTTP Basic Authentication.
-
-## 🧪 Testing
-
-Run the test suite:
-
-```bash
-go test ./...
-```
-
-Run tests with verbose output:
-
-```bash
-go test ./... -v
-```
-
-## 📊 Performance
-
-This library is designed for high performance and has been benchmarked against the official Go `net/http` package:
-
-### 🏆 **Benchmark Results vs Official Go HTTP**
-
-| Category | HTTP-Go | Official HTTP | Improvement |
-|----------|---------|---------------|-------------|
-| **JSON Processing** | 110,719 ns/op | 120,610 ns/op | **8.2% faster** |
-| **Memory Usage** | 659 B/op | 28,511 B/op | **97.7% less memory** |
-| **Header Operations** | 17.21 ns/op | 28.64 ns/op | **39.9% faster** |
-| **Response Creation** | 6.435 ns/op | 8.587 ns/op | **25.1% faster** |
-| **Allocation Count** | 14 allocs/op | 158 allocs/op | **91.1% fewer allocations** |
-
-### 🚀 **Performance Highlights**
-
-- **Memory Efficiency**: Up to **97.7% less memory usage**
-- **Faster Processing**: Up to **39.9% faster** in key operations
-- **Fewer Allocations**: Up to **91.1% fewer allocations**
-- **Zero-Cost Abstractions**: Minimal overhead for constants and basic operations
-
-### 📈 **Detailed Results**
-
-For comprehensive benchmark results, see [BENCHMARK_RESULTS.md](benchmark/BENCHMARK_RESULTS.md).
-
-**🏆 HTTP-Go wins in 13 out of 18 performance categories!**
-
-### 🧪 **Running Benchmarks**
-
-Run the benchmark suite:
-
-```bash
-# Quick benchmark summary
-./benchmark/run_benchmarks.sh
-
-# Detailed benchmark results
-go test ./benchmark -bench=. -benchmem
-
-# Run specific benchmarks
-go test ./benchmark -bench=BenchmarkJSONProcessing -benchmem
 ```

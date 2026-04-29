@@ -1,8 +1,10 @@
 package http
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"testing"
@@ -102,7 +104,7 @@ func TestParseRequest(t *testing.T) {
 		},
 		{
 			name:        "Unsupported method",
-			rawRequest:  "PATCH /api HTTP/1.1\r\n\r\n",
+			rawRequest:  "FOOBAR /api HTTP/1.1\r\n\r\n",
 			expectError: true,
 		},
 		{
@@ -153,19 +155,18 @@ func TestParseRequest(t *testing.T) {
 }
 
 func TestMatchRoute(t *testing.T) {
-	// Clear existing routes
-	routes = make(map[Method][]route)
+	router := &Router{}
 
 	// Register test routes
-	Handle(GET, "/api/users", func(req *Request) *Response {
+	router.Handle(GET, "/api/users", func(req *Request) *Response {
 		return &Response{StatusCode: 200, Body: []byte("users list")}
 	})
 
-	Handle(GET, "/api/users/:id", func(req *Request) *Response {
+	router.Handle(GET, "/api/users/:id", func(req *Request) *Response {
 		return &Response{StatusCode: 200, Body: []byte("user " + req.PathValue("id"))}
 	})
 
-	Handle(POST, "/api/users", func(req *Request) *Response {
+	router.Handle(POST, "/api/users", func(req *Request) *Response {
 		return &Response{StatusCode: 201, Body: []byte("user created")}
 	})
 
@@ -215,7 +216,7 @@ func TestMatchRoute(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handler, params := matchRoute(tt.method, tt.path)
+			handler, params := router.match(tt.method, tt.path)
 
 			if tt.found {
 				if handler == nil {
@@ -337,7 +338,7 @@ func TestServer_ReadHeaders(t *testing.T) {
 	}
 	defer conn.Close()
 
-	headersPart, bodyStart, err := server.readHeaders(conn)
+	headersPart, bodyStart, err := server.readHeaders(bufio.NewReader(conn))
 	if err != nil {
 		t.Errorf("Expected no error from readHeaders, got %v", err)
 	}
@@ -412,7 +413,7 @@ func TestServer_ReadBody(t *testing.T) {
 		buffer: bytes.NewBuffer(remainingBody),
 	}
 
-	fullBody, err := server.readBody(mockConn, bodyStart, contentLength)
+	fullBody, err := server.readBody(bufio.NewReader(mockConn), bodyStart, contentLength)
 	if err != nil {
 		t.Errorf("Expected no error from readBody, got %v", err)
 	}
@@ -463,11 +464,8 @@ func (m *mockConn) SetWriteDeadline(t time.Time) error {
 func TestServer_ProcessRequest(t *testing.T) {
 	server := NewDefaultServer("localhost", 8080)
 
-	// Clear existing routes
-	routes = make(map[Method][]route)
-
-	// Register a test route
-	Handle(GET, "/api/test", func(req *Request) *Response {
+	// Register a test route on the server
+	server.Handle(GET, "/api/test", func(req *Request) *Response {
 		return &Response{
 			StatusCode: 200,
 			Header:     Header{"Content-Type": {"application/json"}},
@@ -496,9 +494,6 @@ func TestServer_ProcessRequest(t *testing.T) {
 
 func TestServer_ProcessRequest_NotFound(t *testing.T) {
 	server := NewDefaultServer("localhost", 8080)
-
-	// Clear existing routes
-	routes = make(map[Method][]route)
 
 	req := &Request{
 		Method: GET,
@@ -651,5 +646,203 @@ func TestDecodeChunked(t *testing.T) {
 				t.Errorf("Expected '%s', got '%s'", tt.expected, string(result))
 			}
 		})
+	}
+}
+
+
+func TestParseRequest_NegativeContentLength(t *testing.T) {
+	raw := "POST /api HTTP/1.1\r\n" +
+		"Host: localhost:8080\r\n" +
+		"Content-Length: -5\r\n" +
+		"\r\n"
+	_, err := parseRequest([]byte(raw))
+	if err == nil {
+		t.Errorf("Expected error for negative Content-Length")
+	}
+}
+
+func TestParseRequest_DuplicateContentLength(t *testing.T) {
+	raw := "POST /api HTTP/1.1\r\n" +
+		"Host: localhost:8080\r\n" +
+		"Content-Length: 5\r\n" +
+		"Content-Length: 10\r\n" +
+		"\r\n" +
+		"Hello"
+	_, err := parseRequest([]byte(raw))
+	if err == nil {
+		t.Errorf("Expected error for conflicting duplicate Content-Length")
+	}
+}
+
+func TestParseRequest_AllValidMethods(t *testing.T) {
+	methods := []Method{GET, POST, PUT, DELETE, HEAD, OPTIONS, TRACE, CONNECT, PATCH}
+	for _, m := range methods {
+		raw := fmt.Sprintf("%s /api HTTP/1.1\r\nHost: localhost\r\n\r\n", m)
+		req, err := parseRequest([]byte(raw))
+		if err != nil {
+			t.Errorf("Expected %s to be valid, got error: %v", m, err)
+		}
+		if req.Method != m {
+			t.Errorf("Expected method %s, got %s", m, req.Method)
+		}
+	}
+}
+
+func TestDecodeChunked_InvalidChunkSize(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+	}{
+		{
+			name: "negative chunk size",
+			data: "-5\r\nHello\r\n0\r\n\r\n",
+		},
+		{
+			name: "oversized chunk",
+			data: "1000000\r\nHello\r\n0\r\n\r\n",
+		},
+		{
+			name: "invalid hex",
+			data: "zz\r\nHello\r\n0\r\n\r\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := decodeChunked([]byte(tt.data))
+			if err == nil {
+				t.Errorf("Expected error for %s", tt.name)
+			}
+		})
+	}
+}
+
+func TestServer_MaxHeaderBytes(t *testing.T) {
+	server := NewDefaultServer("localhost", 8080)
+	server.MaxHeaderBytes = 50
+
+	listener, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		t.Fatalf("Failed to create listener: %v", err)
+	}
+	defer listener.Close()
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		// Send headers larger than 50 bytes
+		conn.Write([]byte("GET /api HTTP/1.1\r\nHost: localhost:8080\r\nX-Large: " + strings.Repeat("a", 100) + "\r\n\r\n"))
+	}()
+
+	conn, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	_, _, err = server.readHeaders(bufio.NewReader(conn))
+	if err == nil {
+		t.Errorf("Expected error for headers exceeding MaxHeaderBytes")
+	}
+}
+
+func TestServer_CustomLiteralSafe(t *testing.T) {
+	server := &Server{Host: "localhost", Port: 8080}
+	// Should not panic when setupConnection is called without explicit init
+	listener, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		t.Fatalf("Failed to create listener: %v", err)
+	}
+	defer listener.Close()
+
+	conn, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	err = server.setupConnection(conn)
+	if err != nil {
+		t.Errorf("Expected no error from setupConnection on custom literal, got %v", err)
+	}
+
+	server.mu.Lock()
+	if len(server.conn) != 1 {
+		t.Errorf("Expected 1 tracked connection, got %d", len(server.conn))
+	}
+	server.mu.Unlock()
+}
+
+func TestWriteResponse_HeaderInjection(t *testing.T) {
+	listener, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		t.Fatalf("Failed to create listener: %v", err)
+	}
+	defer listener.Close()
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		resp := &Response{
+			StatusCode: 200,
+			Header: Header{
+				"X-Evil": {"evil\r\nInjected: header"},
+			},
+			Body: []byte("ok"),
+		}
+		writeResponse(conn, resp)
+	}()
+
+	conn, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	var buf bytes.Buffer
+	io.Copy(&buf, conn)
+	if strings.Contains(buf.String(), "Injected:") {
+		t.Errorf("Header injection should be blocked")
+	}
+}
+
+func TestReadHeaders_LowercaseHeaders(t *testing.T) {
+	server := NewDefaultServer("localhost", 8080)
+
+	listener, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		t.Fatalf("Failed to create listener: %v", err)
+	}
+	defer listener.Close()
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		conn.Write([]byte("GET /api HTTP/1.1\r\nhost: localhost:8080\r\ncontent-type: application/json\r\n\r\n"))
+	}()
+
+	conn, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	req, err := server.readAndParseRequest(conn)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+	if req.Header.Get("Host") != "localhost:8080" {
+		t.Errorf("Expected Host header to be case-insensitive, got %s", req.Header.Get("Host"))
+	}
+	if req.Header.Get("Content-Type") != "application/json" {
+		t.Errorf("Expected Content-Type header to be case-insensitive, got %s", req.Header.Get("Content-Type"))
 	}
 }

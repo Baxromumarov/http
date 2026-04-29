@@ -8,6 +8,22 @@ import (
 	"time"
 )
 
+var allowedMethods = [...]string{
+	GET.String(),
+	HEAD.String(),
+	POST.String(),
+	PUT.String(),
+	PATCH.String(),
+	DELETE.String(),
+	OPTIONS.String(),
+}
+
+var allowedMethodsHeaderValue = strings.Join(allowedMethods[:], ", ")
+
+func allowedMethodsHeader() []string {
+	return []string{allowedMethodsHeaderValue}
+}
+
 func (s *Server) Use(middleware ...MiddlewareFunc) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -39,7 +55,7 @@ func Recover() MiddlewareFunc {
 			}
 			if resp != nil {
 				resp.Header["Access-Control-Allow-Origin"] = []string{"*"}
-				resp.Header["Access-Control-Allow-Methods"] = []string{"GET, POST, PUT, DELETE, OPTIONS"}
+				resp.Header["Access-Control-Allow-Methods"] = allowedMethodsHeader()
 				resp.Header["Access-Control-Allow-Headers"] = []string{"Content-Type, Authorization"}
 			}
 
@@ -47,6 +63,7 @@ func Recover() MiddlewareFunc {
 		}
 	}
 }
+
 func Logger() MiddlewareFunc {
 	return func(next HandlerFunc) HandlerFunc {
 		return func(req *Request) *Response {
@@ -68,12 +85,12 @@ func CORS() MiddlewareFunc {
 	return func(next HandlerFunc) HandlerFunc {
 		return func(req *Request) *Response {
 			// Handle preflight request
-			if req.Method == "OPTIONS" {
+			if req.Method == OPTIONS {
 				return &Response{
 					StatusCode: 204, // No Content
 					Header: Header{
 						"Access-Control-Allow-Origin":  {"*"},
-						"Access-Control-Allow-Methods": {"GET, POST, PUT, DELETE, OPTIONS"},
+						"Access-Control-Allow-Methods": allowedMethodsHeader(),
 						"Access-Control-Allow-Headers": {"Content-Type, Authorization"},
 						"Access-Control-Max-Age":       {"86400"}, // 24 hours
 					},
@@ -87,7 +104,7 @@ func CORS() MiddlewareFunc {
 				resp.Header = make(Header)
 			}
 			resp.Header["Access-Control-Allow-Origin"] = []string{"*"}
-			resp.Header["Access-Control-Allow-Methods"] = []string{"GET, POST, PUT, DELETE, OPTIONS"}
+			resp.Header["Access-Control-Allow-Methods"] = allowedMethodsHeader()
 			resp.Header["Access-Control-Allow-Headers"] = []string{"Content-Type, Authorization"}
 
 			return resp
@@ -103,17 +120,18 @@ func BasicAuth(users map[string]string) MiddlewareFunc {
 			if auth == "" {
 				return &Response{
 					StatusCode: 401,
-					Header:     Header{"WWW-Authenticate": {"Basic realm=\"Restricted\""}},
+					Header:     Header{"Www-Authenticate": {"Basic realm=\"Restricted\""}},
 					Body:       []byte("Unauthorized"),
 				}
 			}
 
 			// Basic auth format: "Basic base64(username:password)"
 			const prefix = "Basic "
-			if len(auth) < len(prefix) || !strings.EqualFold(auth[:len(prefix)], prefix) {
+			if len(auth) < len(prefix) ||
+				!strings.EqualFold(auth[:len(prefix)], prefix) {
 				return &Response{
 					StatusCode: 401,
-					Header:     Header{"WWW-Authenticate": {"Basic realm=\"Restricted\""}},
+					Header:     Header{"Www-Authenticate": {"Basic realm=\"Restricted\""}},
 					Body:       []byte("Unauthorized"),
 				}
 			}
@@ -123,7 +141,7 @@ func BasicAuth(users map[string]string) MiddlewareFunc {
 			if err != nil {
 				return &Response{
 					StatusCode: 401,
-					Header:     Header{"WWW-Authenticate": {"Basic realm=\"Restricted\""}},
+					Header:     Header{"Www-Authenticate": {"Basic realm=\"Restricted\""}},
 					Body:       []byte("Unauthorized"),
 				}
 			}
@@ -132,7 +150,7 @@ func BasicAuth(users map[string]string) MiddlewareFunc {
 			if len(credentials) != 2 {
 				return &Response{
 					StatusCode: 401,
-					Header:     Header{"WWW-Authenticate": {"Basic realm=\"Restricted\""}},
+					Header:     Header{"Www-Authenticate": {"Basic realm=\"Restricted\""}},
 					Body:       []byte("Unauthorized"),
 				}
 			}
@@ -141,7 +159,7 @@ func BasicAuth(users map[string]string) MiddlewareFunc {
 			if pwd, ok := users[username]; !ok || pwd != password {
 				return &Response{
 					StatusCode: 401,
-					Header:     Header{"WWW-Authenticate": {"Basic realm=\"Restricted\""}},
+					Header:     Header{"Www-Authenticate": {"Basic realm=\"Restricted\""}},
 					Body:       []byte("Unauthorized"),
 				}
 			}

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -30,23 +31,34 @@ func (c *Client) Send(req *Request) (*Response, error) {
 		}
 	}()
 
-	if c.Timeout == 0 {
-		c.Timeout = defaultTimeout
+	timeout := c.Timeout
+	if timeout == 0 {
+		timeout = defaultTimeout
 	}
 
-	hostPort := net.JoinHostPort(req.URL.Hostname(), req.URL.Port())
+	port := req.URL.Port()
+	if port == "" {
+		switch req.URL.Scheme {
+		case "http":
+			port = "80"
+		case "https":
+			port = "443"
+		}
+	}
+
+	hostPort := net.JoinHostPort(req.URL.Hostname(), port)
 	if hostPort == ":" {
 		return nil, fmt.Errorf("invalid host or port")
 	}
 
-	tcpConn, err := net.DialTimeout("tcp", hostPort, c.Timeout)
+	tcpConn, err := net.DialTimeout("tcp", hostPort, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("error connecting to %s: %w", hostPort, err)
 	}
 
 	defer func() { _ = tcpConn.Close() }()
 
-	if err := tcpConn.SetDeadline(time.Now().Add(c.Timeout)); err != nil {
+	if err := tcpConn.SetDeadline(time.Now().Add(timeout)); err != nil {
 		return nil, err
 	}
 
@@ -59,35 +71,151 @@ func (c *Client) Send(req *Request) (*Response, error) {
 		return nil, fmt.Errorf("error writing request: %w", err)
 	}
 
-	// Read full response
-	var respBuf bytes.Buffer
-	tmpBuf := make([]byte, defaultBufSize)
+	resp, err := c.readResponse(tcpConn)
+	if err != nil {
+		return nil, fmt.Errorf("error reading response: %w", err)
+	}
+
+	return resp, nil
+}
+
+func (c *Client) readResponse(conn net.Conn) (*Response, error) {
+	reader := bufio.NewReader(conn)
+
+	// Read status line
+	statusLine, err := reader.ReadString('\n')
+	if err != nil {
+		return nil, fmt.Errorf("error reading status line: %w", err)
+	}
+
+	statusLine = strings.TrimRight(statusLine, "\r\n")
+
+	statusParts := strings.SplitN(statusLine, " ", 3)
+	if len(statusParts) < 2 {
+		return nil, fmt.Errorf("invalid status line: %s", statusLine)
+	}
+	
+	statusCode, _ := strconv.Atoi(statusParts[1])
+
+	// Read headers
+	headers := make(Header)
+	var contentLength int64 = -1
+	var chunked bool
 
 	for {
-		n, err := tcpConn.Read(tmpBuf)
-		if n > 0 {
-			respBuf.Write(tmpBuf[:n])
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, fmt.Errorf("error reading header: %w", err)
 		}
 
-		if err != nil {
-			if err == io.EOF {
-				break // finished reading
-			}
-
-			// Check if the connection was closed by the server
-			if strings.Contains(err.Error(), "connection reset by peer") ||
-				strings.Contains(err.Error(), "broken pipe") {
-				break // server closed the connection, but we have the response
-			}
-
-			return nil, fmt.Errorf("error reading response: %w", err)
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" {
+			break
+		}
+		
+		kv := strings.SplitN(line, ":", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		
+		key := strings.TrimSpace(kv[0])
+		val := strings.TrimSpace(kv[1])
+		ck := canonicalKey(key)
+		headers[ck] = append(headers[ck], val)
+		if ck == "Content-Length" {
+			contentLength, _ = strconv.ParseInt(val, 10, 64)
+		}
+		if ck == "Transfer-Encoding" && strings.EqualFold(val, "chunked") {
+			chunked = true
 		}
 	}
-	return parseResponse(respBuf.Bytes())
+
+	// Read body
+	var body []byte
+	if chunked {
+		body, err = c.readChunkedBody(reader)
+		if err != nil {
+			return nil, fmt.Errorf("error reading chunked body: %w", err)
+		}
+	} else if contentLength >= 0 {
+		body = make([]byte, contentLength)
+		_, err = io.ReadFull(reader, body)
+		if err != nil {
+			return nil, fmt.Errorf("error reading body: %w", err)
+		}
+	} else {
+		// Read until EOF or connection close
+		var buf bytes.Buffer
+		_, err = io.Copy(&buf, reader)
+		if err != nil && err != io.EOF {
+			return nil, fmt.Errorf("error reading body: %w", err)
+		}
+		body = buf.Bytes()
+	}
+
+	return &Response{
+		Status:     statusLine,
+		StatusCode: statusCode,
+		Header:     headers,
+		Body:       body,
+	}, nil
+}
+
+func (c *Client) readChunkedBody(reader *bufio.Reader) ([]byte, error) {
+	var buf bytes.Buffer
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		line = strings.TrimRight(line, "\r\n")
+		if semicolon := strings.Index(line, ";"); semicolon != -1 {
+			line = line[:semicolon]
+		}
+		line = strings.TrimSpace(line)
+		chunkSize, err := strconv.ParseInt(line, 16, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid chunk size: %s", line)
+		}
+		if chunkSize < 0 {
+			return nil, fmt.Errorf("negative chunk size")
+		}
+		if chunkSize > 1<<20 {
+			return nil, fmt.Errorf("chunk size too large")
+		}
+		if chunkSize == 0 {
+			// Read trailing headers (if any) and final CRLF
+			for {
+				trailerLine, err := reader.ReadString('\n')
+				if err != nil {
+					return nil, err
+				}
+				trailerLine = strings.TrimRight(trailerLine, "\r\n")
+				if trailerLine == "" {
+					break
+				}
+			}
+			break
+		}
+		if _, err := io.CopyN(&buf, reader, chunkSize); err != nil {
+			return nil, err
+		}
+		// Read trailing CRLF
+		crLf := make([]byte, 2)
+		if _, err := io.ReadFull(reader, crLf); err != nil {
+			return nil, err
+		}
+	}
+	return buf.Bytes(), nil
 }
 
 func (r *Request) Raw() []byte {
 	var buf bytes.Buffer
+
+	// Auto-set Content-Length if body exists and header is not set
+	if len(r.Body) > 0 && r.Header.Get("Content-Length") == "" {
+		r.Header.Set("Content-Length", strconv.Itoa(len(r.Body)))
+	}
 
 	// Write request line: METHOD PATH HTTP/1.1\r\n
 	buf.WriteString(fmt.Sprintf("%s %s HTTP/1.1\r\n", r.Method, r.URL.RequestURI()))
@@ -104,7 +232,15 @@ func (r *Request) Raw() []byte {
 
 	//other headers
 	for k, v := range r.Header {
-		buf.WriteString(fmt.Sprintf("%s: %s\r\n", k, strings.Join(v, ", ")))
+		if !validHeaderFieldName(k) {
+			continue
+		}
+		for _, val := range v {
+			if !validHeaderFieldValue(val) {
+				continue
+			}
+			buf.WriteString(fmt.Sprintf("%s: %s\r\n", k, val))
+		}
 	}
 
 	// End headers with an empty line
@@ -118,15 +254,6 @@ func (r *Request) Raw() []byte {
 	return buf.Bytes()
 }
 
-// HTTP/1.1 200 OK
-// Date: Mon, 27 Jul 2009 12:28:53 GMT
-// Server: Apache
-// Last-Modified: Wed, 22 Jul 2009 19:15:56 GMT
-// ETag: "34aa387-d-1568eb00"
-// Accept-Ranges: bytes
-// Content-Length: 51
-// Vary: Accept-Encoding
-// Content-Type: text/plain
 func parseResponse(raw []byte) (*Response, error) {
 	// Split headers and body
 	parts := bytes.SplitN(raw, doubleCRLF, 2)
@@ -158,12 +285,12 @@ func parseResponse(raw []byte) (*Response, error) {
 		if len(kv) == 2 {
 			key := strings.TrimSpace(kv[0])
 			val := strings.TrimSpace(kv[1])
-			headers[key] = append(headers[key], val)
+			headers[canonicalKey(key)] = append(headers[canonicalKey(key)], val)
 		}
 	}
 
 	// Handle chunked encoding
-	if te, ok := headers["Transfer-Encoding"]; ok && len(te) > 0 && te[0] == "chunked" {
+	if te, ok := headers["Transfer-Encoding"]; ok && len(te) > 0 && strings.EqualFold(te[0], "chunked") {
 		decodedBody, err := decodeChunked(body)
 		if err != nil {
 			return nil, fmt.Errorf("error decoding chunked body: %v", err)
@@ -214,6 +341,6 @@ func NewRequest(method Method, url string, body []byte) (*Request, error) {
 	}, nil
 }
 
-func (r *Response) Unmarshal(v interface{}) error {
+func (r *Response) Unmarshal(v any) error {
 	return json.Unmarshal(r.Body, v)
 }

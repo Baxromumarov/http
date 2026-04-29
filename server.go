@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -8,7 +9,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -17,8 +17,10 @@ import (
 )
 
 const (
-	defaultBufSize = 1 << 12
-	httpVersion    = "HTTP/1.1"
+	// defaultBufSize   = 1 << 12 // 4 KB
+	httpVersion      = "HTTP/1.1"
+	defaultMaxHeader = 1 << 20 // 1 MB
+	defaultMaxBody   = 1 << 22 // 4 MB
 )
 
 type Server struct {
@@ -29,15 +31,125 @@ type Server struct {
 	ReadTimeout  time.Duration
 	IdleTimeout  time.Duration
 
+	MaxHeaderBytes int
+	MaxBodyBytes   int64
+
 	DisableNagle bool // https://en.wikipedia.org/wiki/Nagle%27s_algorithm
 	conn         map[string]struct{}
-	mu           sync.Mutex // for conn, currently only full locking is used, in v2 it will be extended
+	mu           sync.Mutex // for conn and middleware
 	middleware   []MiddlewareFunc
+
+	router *Router
+}
+
+type ServerI interface {
+	Handle(method Method, path string, handler HandlerFunc)
+	GET(path string, handler HandlerFunc)
+	POST(path string, handler HandlerFunc)
+	PUT(path string, handler HandlerFunc)
+	DELETE(path string, handler HandlerFunc)
+	HEAD(path string, handler HandlerFunc)
+	OPTIONS(path string, handler HandlerFunc)
+	PATCH(path string, handler HandlerFunc)
+	init()
+	StartServer() error
+	Close()
+}
+
+var _ ServerI = (*Server)(nil) // compile-time check that Server implements ServerI
+
+// Router holds registered routes protected by a RWMutex.
+type Router struct {
+	mu     sync.RWMutex
+	routes map[Method][]route
+}
+
+type route struct {
+	pattern string
+	method  Method
+	handler HandlerFunc
+}
+
+func (r *Router) Handle(
+	method Method,
+	path string,
+	handler HandlerFunc,
+) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.routes == nil {
+		r.routes = make(map[Method][]route)
+	}
+
+	r.routes[method] = append(r.routes[method], route{
+		pattern: path,
+		method:  method,
+		handler: handler,
+	})
+}
+
+func (r *Router) match(
+	method Method,
+	path string,
+) (
+	HandlerFunc,
+	map[string]string,
+) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for _, rt := range r.routes[method] {
+		patternParts := strings.Split(rt.pattern, "/")
+		pathParts := strings.Split(path, "/")
+
+		if len(patternParts) != len(pathParts) {
+			continue
+		}
+
+		params := make(map[string]string)
+		match := true
+
+		for i := range patternParts {
+			if strings.HasPrefix(patternParts[i], ":") {
+				key := patternParts[i][1:]
+				params[key] = pathParts[i]
+			} else if patternParts[i] != pathParts[i] {
+				match = false
+				break
+			}
+		}
+
+		if match {
+			return rt.handler, params
+		}
+	}
+
+	return nil, nil
+}
+
+func (s *Server) init() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.conn == nil {
+		s.conn = make(map[string]struct{})
+	}
+	if s.router == nil {
+		s.router = &Router{}
+	}
+	if s.MaxHeaderBytes == 0 {
+		s.MaxHeaderBytes = defaultMaxHeader
+	}
+	if s.MaxBodyBytes == 0 {
+		s.MaxBodyBytes = defaultMaxBody
+	}
 }
 
 func (s *Server) StartServer() error {
+	s.init()
+
 	listener, err := net.Listen(
-		"tcp", // for simplicity, I only use tcp
+		"tcp", // for simplicity, I only used tcp
 		net.JoinHostPort(s.Host, strconv.Itoa(s.Port)),
 	)
 	if err != nil {
@@ -57,27 +169,29 @@ func (s *Server) StartServer() error {
 }
 
 func (s *Server) timeoutHandler(conn net.Conn) error {
-	if s.ReadTimeout == 0 {
-		s.ReadTimeout = defaultTimeout
+	readTimeout := s.ReadTimeout
+	writeTimeout := s.WriteTimeout
+	idleTimeout := s.IdleTimeout
+
+	if readTimeout == 0 {
+		readTimeout = defaultTimeout
+	}
+	if writeTimeout == 0 {
+		writeTimeout = defaultTimeout
+	}
+	if idleTimeout == 0 {
+		idleTimeout = defaultTimeout
 	}
 
-	if s.WriteTimeout == 0 {
-		s.WriteTimeout = defaultTimeout
-	}
-
-	if s.IdleTimeout == 0 {
-		s.IdleTimeout = defaultTimeout
-	}
-
-	if err := conn.SetReadDeadline(time.Now().Add(s.ReadTimeout)); err != nil {
+	if err := conn.SetReadDeadline(time.Now().Add(readTimeout)); err != nil {
 		return fmt.Errorf("error setting read deadline: %s", err)
 	}
 
-	if err := conn.SetWriteDeadline(time.Now().Add(s.WriteTimeout)); err != nil {
+	if err := conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
 		return fmt.Errorf("error setting write deadline: %s", err)
 	}
 
-	if err := conn.SetDeadline(time.Now().Add(s.IdleTimeout)); err != nil {
+	if err := conn.SetDeadline(time.Now().Add(idleTimeout)); err != nil {
 		return fmt.Errorf("error setting idle deadline: %s", err)
 	}
 
@@ -87,13 +201,20 @@ func (s *Server) timeoutHandler(conn net.Conn) error {
 func (s *Server) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	for k := range s.conn {
 		delete(s.conn, k)
 	}
 }
 
 func (s *Server) handleConn(conn net.Conn) {
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Panic recovered in connection handler: %v", r)
+			writeErrorResponse(conn, StatusInternalServerError)
+		}
+		_ = conn.Close()
+	}()
 
 	// Setup connection
 	if err := s.setupConnection(conn); err != nil {
@@ -105,6 +226,11 @@ func (s *Server) handleConn(conn net.Conn) {
 	req, err := s.readAndParseRequest(conn)
 	if err != nil {
 		log.Printf("error reading/parsing request: %s", err)
+		if errors.Is(err, ErrRequestEntityTooLarge) {
+			writeErrorResponse(conn, StatusRequestEntityTooLarge)
+		} else {
+			writeErrorResponse(conn, StatusBadRequest)
+		}
 		return
 	}
 
@@ -115,8 +241,24 @@ func (s *Server) handleConn(conn net.Conn) {
 	writeResponse(conn, resp)
 }
 
+var ErrRequestEntityTooLarge = errors.New("request entity too large")
+
+func writeErrorResponse(conn net.Conn, code int) {
+	body := []byte(StatusText(code))
+
+	resp := &Response{
+		StatusCode: code,
+		Header:     Header{"Content-Type": {ContentTypeText}},
+		Body:       body,
+	}
+
+	writeResponse(conn, resp)
+}
+
 // setupConnection configures the connection with timeouts and Nagle's algorithm settings
 func (s *Server) setupConnection(conn net.Conn) error {
+	s.init()
+
 	// Track connection
 	s.mu.Lock()
 	s.conn[conn.RemoteAddr().String()] = struct{}{}
@@ -140,8 +282,10 @@ func (s *Server) setupConnection(conn net.Conn) error {
 
 // readAndParseRequest reads the HTTP request from the connection and parses it
 func (s *Server) readAndParseRequest(conn net.Conn) (*Request, error) {
+	reader := bufio.NewReader(conn)
+
 	// Read headers
-	headersPart, bodyStart, err := s.readHeaders(conn)
+	headersPart, bodyStart, err := s.readHeaders(reader)
 	if err != nil {
 		return nil, fmt.Errorf("error reading headers: %w", err)
 	}
@@ -153,9 +297,15 @@ func (s *Server) readAndParseRequest(conn net.Conn) (*Request, error) {
 	}
 
 	// Read the complete body
-	fullBody, err := s.readBody(conn, bodyStart, contentLength)
+	fullBody, err := s.readBody(reader, bodyStart, contentLength)
 	if err != nil {
 		return nil, fmt.Errorf("error reading body: %w", err)
+	}
+
+	// Check max body size
+	if s.MaxBodyBytes > 0 &&
+		int64(len(fullBody)) > s.MaxBodyBytes {
+		return nil, ErrRequestEntityTooLarge
 	}
 
 	// Construct and parse the full request
@@ -168,21 +318,31 @@ func (s *Server) readAndParseRequest(conn net.Conn) (*Request, error) {
 	return req, nil
 }
 
-// readHeaders reads the HTTP headers from the connection
-func (s *Server) readHeaders(conn net.Conn) ([]byte, []byte, error) {
+// readHeaders reads the HTTP headers from the connection using bufio.
+func (s *Server) readHeaders(
+	reader *bufio.Reader,
+) (
+	headersPart []byte,
+	bodyStart []byte,
+	err error,
+) {
 	var headerBuf bytes.Buffer
-	tmp := make([]byte, 1)
 
 	for {
-		n, err := conn.Read(tmp)
-		if n > 0 {
-			headerBuf.Write(tmp[:n])
-			if strings.Contains(headerBuf.String(), string(doubleCRLF)) {
-				break
-			}
-		}
+		line, err := reader.ReadBytes('\n')
 		if err != nil {
 			return nil, nil, fmt.Errorf("error reading from connection: %w", err)
+		}
+
+		headerBuf.Write(line)
+
+		if s.MaxHeaderBytes > 0 &&
+			headerBuf.Len() > s.MaxHeaderBytes {
+			return nil, nil, ErrRequestEntityTooLarge
+		}
+
+		if bytes.HasSuffix(headerBuf.Bytes(), doubleCRLF) {
+			break
 		}
 	}
 
@@ -192,13 +352,13 @@ func (s *Server) readHeaders(conn net.Conn) ([]byte, []byte, error) {
 		return nil, nil, fmt.Errorf("no header-body separator found")
 	}
 
-	headersPart := headerData[:headerEnd+4]
-	bodyStart := headerData[headerEnd+4:]
+	headersPart = headerData[:headerEnd+4]
+	bodyStart = headerData[headerEnd+4:]
 
 	return headersPart, bodyStart, nil
 }
 
-// getContentLength extracts the Content-Length header value
+// getContentLength extracts the Content-Length header value with validation.
 func (s *Server) getContentLength(headersPart []byte) (int, error) {
 	// Parse headers to get Content-Length
 	tmpReq := &Request{Header: make(Header)}
@@ -215,6 +375,8 @@ func (s *Server) getContentLength(headersPart []byte) (int, error) {
 	}
 
 	// Parse headers
+	var contentLengthSet bool
+	var contentLength int
 	for _, line := range lines[1:] {
 		lineStr := string(line)
 		if lineStr == "" {
@@ -227,22 +389,49 @@ func (s *Server) getContentLength(headersPart []byte) (int, error) {
 
 		key := strings.TrimSpace(lineStr[:colon])
 		val := strings.TrimSpace(lineStr[colon+1:])
-		tmpReq.Header[key] = append(tmpReq.Header[key], val)
-	}
+		ck := canonicalKey(key)
 
-	// Get Content-Length
-	contentLength := 0
-	if cl := tmpReq.Header.Get("Content-Length"); cl != "" {
-		contentLength, _ = strconv.Atoi(cl)
+		if ck == "Content-Length" {
+			cl, err := strconv.Atoi(val)
+			if err != nil {
+				return 0, fmt.Errorf("invalid content-length")
+			}
+
+			if cl < 0 {
+				return 0, fmt.Errorf("negative content-length")
+			}
+
+			if contentLengthSet && cl != contentLength {
+				return 0, fmt.Errorf("conflicting content-length values")
+			}
+
+			contentLength = cl
+			contentLengthSet = true
+		}
+
+		tmpReq.Header[ck] = append(tmpReq.Header[ck], val)
 	}
 
 	return contentLength, nil
 }
 
 // readBody reads the complete HTTP body based on Content-Length
-func (s *Server) readBody(conn net.Conn, bodyStart []byte, contentLength int) ([]byte, error) {
+func (s *Server) readBody(
+	reader *bufio.Reader,
+	bodyStart []byte,
+	contentLength int,
+) (
+	[]byte,
+	error,
+) {
 	if contentLength <= 0 {
 		return bodyStart, nil
+	}
+
+	if s.MaxBodyBytes > 0 &&
+		int64(contentLength) > s.MaxBodyBytes {
+
+		return nil, ErrRequestEntityTooLarge
 	}
 
 	remainingBytes := contentLength - len(bodyStart)
@@ -251,7 +440,7 @@ func (s *Server) readBody(conn net.Conn, bodyStart []byte, contentLength int) ([
 	}
 
 	remainingBody := make([]byte, remainingBytes)
-	if _, err := io.ReadFull(conn, remainingBody); err != nil {
+	if _, err := io.ReadFull(reader, remainingBody); err != nil {
 		return nil, fmt.Errorf("error reading remaining body: %w", err)
 	}
 
@@ -261,7 +450,7 @@ func (s *Server) readBody(conn net.Conn, bodyStart []byte, contentLength int) ([
 // processRequest handles the request through middleware and route matching
 func (s *Server) processRequest(req *Request) *Response {
 	// Find matching route
-	handler, params := matchRoute(req.Method, req.Path)
+	handler, params := s.router.match(req.Method, req.Path)
 	req.pathParams = params
 
 	// Create the handler chain with middleware
@@ -282,7 +471,7 @@ func (s *Server) createHandlerChain(handler HandlerFunc) HandlerFunc {
 	var handlerChain HandlerFunc = func(req *Request) *Response {
 		if handler == nil {
 			return &Response{
-				StatusCode: 404,
+				StatusCode: StatusNotFound,
 				Header:     Header{"Content-Type": {ContentTypeJSON}},
 				Body:       []byte("404 Not found"),
 			}
@@ -319,55 +508,19 @@ type HandlerFunc func(req *Request) *Response
 // MiddlewareFunc is a function that wraps a handler with additional functionality
 type MiddlewareFunc func(HandlerFunc) HandlerFunc
 
-var routes = map[Method][]route{}
-
-type route struct {
-	pattern string
-	method  Method
-	handler HandlerFunc
+// Handle registers a handler on the default global server.
+// For multi-server usage, use server.Handle instead.
+func Handle(
+	method Method,
+	path string,
+	handler HandlerFunc,
+) {
+	defaultServer.Handle(method, path, handler)
 }
 
-func matchRoute(method Method, path string) (HandlerFunc, map[string]string) {
-	for _, r := range routes[method] {
-		patternParts := strings.Split(r.pattern, "/")
-		pathParts := strings.Split(path, "/")
-
-		if len(patternParts) != len(pathParts) {
-			continue
-		}
-
-		params := make(map[string]string)
-		match := true
-
-		for i := range patternParts {
-			if strings.HasPrefix(patternParts[i], string(colon)) {
-				key := patternParts[i][1:]
-				params[key] = pathParts[i]
-			} else if patternParts[i] != pathParts[i] {
-				match = false
-				break
-			}
-		}
-
-		if match {
-			return r.handler, params
-		}
-	}
-
-	return nil, nil
-}
-
-// Handle registers a handler for the given method and path
-func Handle(method Method, path string, handler HandlerFunc) {
-	if routes[method] == nil {
-		routes[method] = make([]route, 0)
-	}
-
-	routes[method] = append(routes[method], route{
-		pattern: path,
-		method:  method,
-		handler: handler,
-	})
+var defaultServer = &Server{
+	router: &Router{},
+	conn:   make(map[string]struct{}),
 }
 
 // NewDefaultServer creates a new server with the given host and port
@@ -383,13 +536,14 @@ func NewDefaultServer(host string, port int) *Server {
 	}
 
 	return &Server{
-		Host: host,
-		Port: port,
-		conn: make(map[string]struct{}),
+		Host:   host,
+		Port:   port,
+		conn:   make(map[string]struct{}),
+		router: &Router{},
 	}
 }
 
-// Request Based one: https://datatracker.ietf.org/doc/html/rfc9110#name-connections-clients-and-ser
+// Request Based on: https://datatracker.ietf.org/doc/html/rfc9110#name-connections-clients-and-ser
 // GET /hello.txt HTTP/1.1
 // User-Agent: curl/7.64.1
 // Host: www.example.com
@@ -431,7 +585,7 @@ func parseRequest(data []byte) (*Request, error) {
 	// Split header and body
 	parts := bytes.SplitN(data, doubleCRLF, 2)
 	if len(parts) < 1 {
-		return nil, errors.New("invalid http version: " + req.Version)
+		return nil, errors.New("invalid http request")
 	}
 
 	headerPart := parts[0]
@@ -452,14 +606,11 @@ func parseRequest(data []byte) (*Request, error) {
 		return nil, errors.New("malformed request line")
 	}
 
-	method := partsReq[0]
-
-	switch Method(method) {
-	case GET, POST, PUT, DELETE:
-		req.Method = Method(partsReq[0])
-	default:
+	method := Method(partsReq[0])
+	if !method.IsValid() {
 		return nil, errors.New("unsupported method: " + partsReq[0])
 	}
+	req.Method = method
 
 	version := partsReq[2]
 	if version != httpVersion {
@@ -483,31 +634,55 @@ func parseRequest(data []byte) (*Request, error) {
 		if lineStr == "" {
 			continue
 		}
-		colon := strings.Index(lineStr, string(colon))
-		if colon == -1 {
+		colonIdx := strings.Index(lineStr, string(colon))
+		if colonIdx == -1 {
 			continue
 		}
 
-		key := strings.TrimSpace(lineStr[:colon])
-		val := strings.TrimSpace(lineStr[colon+1:])
-		req.Header[key] = append(req.Header[key], val)
+		key := strings.TrimSpace(lineStr[:colonIdx])
+		val := strings.TrimSpace(lineStr[colonIdx+1:])
+		cKey := canonicalKey(key)
+
+		req.Header[cKey] = append(req.Header[cKey], val)
 	}
 
-	if len(bodyPart) > 0 {
-		if val := req.Header.Get("Content-Length"); val != "" {
-			n, err := strconv.Atoi(val)
+	// Validate Content-Length regardless of body presence
+	if clValues := req.Header.Values("Content-Length"); len(clValues) > 0 {
+		var contentLength int
+		for i, v := range clValues {
+			n, err := strconv.Atoi(v)
 			if err != nil {
 				return nil, errors.New("invalid content-length")
 			}
-			if n > len(bodyPart) {
+
+			if n < 0 {
+				return nil, errors.New("negative content-length")
+			}
+
+			if i == 0 {
+				contentLength = n
+			} else if n != contentLength {
+				return nil, errors.New("conflicting content-length values")
+			}
+		}
+
+		if len(bodyPart) > 0 {
+			if contentLength > len(bodyPart) {
 				return nil, errors.New("incomplete body")
 			}
-			req.Body = bodyPart[:n]
-		} else if val, ok := req.Header["Transfer-Encoding"]; ok && val[0] == "chunked" {
+			req.Body = bodyPart[:contentLength]
+		}
+
+	} else if len(bodyPart) > 0 {
+		if val, ok := req.Header["Transfer-Encoding"]; ok &&
+			len(val) > 0 &&
+			strings.EqualFold(val[0], "chunked") {
+
 			decodedBody, err := decodeChunked(bodyPart)
 			if err != nil {
 				return nil, err
 			}
+
 			req.Body = decodedBody
 
 		} else {
@@ -529,9 +704,23 @@ func decodeChunked(data []byte) ([]byte, error) {
 
 		// Parse chunk size (hex)
 		chunkSizeHex := string(data[:i])
-		chunkSize, err := strconv.ParseInt(strings.TrimSpace(chunkSizeHex), 16, 64)
+		// Chunk extensions are separated by semicolon
+		if semicolon := strings.Index(chunkSizeHex, ";"); semicolon != -1 {
+			chunkSizeHex = chunkSizeHex[:semicolon]
+		}
+
+		chunkSizeHex = strings.TrimSpace(chunkSizeHex)
+		chunkSize, err := strconv.ParseInt(chunkSizeHex, 16, 64)
 		if err != nil {
 			return nil, errors.New("invalid chunk size: " + chunkSizeHex)
+		}
+
+		if chunkSize < 0 {
+			return nil, errors.New("negative chunk size")
+		}
+
+		if chunkSize > defaultMaxHeader {
+			return nil, errors.New("chunk size too large")
 		}
 
 		// Move past chunk size line
@@ -587,45 +776,90 @@ type Response struct {
 	Request       *Request
 }
 
-//handleGET(path string, conn net.Conn)	Dispatches GET routes
-//writeResponse(conn, status, headers, body)	Forms and sends HTTP response
-
+// writeResponse forms and sends HTTP response
 func writeResponse(conn net.Conn, resp *Response) {
 	var buf bytes.Buffer
 
-	buf.WriteString(fmt.Sprintf("%s %d %s\r\n", httpVersion, resp.StatusCode, http.StatusText(resp.StatusCode)))
-	buf.WriteString("Date: " + time.Now().Format(time.RFC1123) + "\r\n")
-	buf.WriteString("Server: Go HTTP Server\r\n")
+	fmt.Fprintf(
+		&buf,
+		"%s %d %s\r\n",
+		httpVersion,
+		resp.StatusCode,
+		StatusText(resp.StatusCode),
+	)
+
+	fmt.Fprintf(
+		&buf,
+		"Date: %s\r\n",
+		time.Now().Format(time.RFC1123),
+	)
+
+	fmt.Fprintf(&buf, "Server: Go HTTP Server\r\n")
 
 	for k, v := range resp.Header {
-		buf.WriteString(fmt.Sprintf("%s: %s\r\n", k, strings.Join(v, ", ")))
+		if !validHeaderFieldName(k) {
+			continue
+		}
+
+		for _, val := range v {
+			if !validHeaderFieldValue(val) {
+				continue
+			}
+
+			fmt.Fprintf(&buf, "%s: %s\r\n", k, val)
+		}
 	}
 
-	buf.WriteString("Content-Length: " + strconv.Itoa(len(resp.Body)) + "\r\n")
+	fmt.Fprintf(
+		&buf,
+		"Content-Length: %d\r\n",
+		len(resp.Body),
+	)
 
-	buf.WriteString("\r\n")
-	buf.Write(resp.Body)
+	fmt.Fprint(&buf, "\r\n")
+	fmt.Fprint(&buf, string(resp.Body))
 
 	_, err := conn.Write(buf.Bytes())
 	if err != nil {
 		log.Printf("error writing response: %v\n", err)
 	}
+}
 
+// Handle registers a handler for the given method and path on this server's router.
+func (s *Server) Handle(
+	method Method,
+	path string,
+	handler HandlerFunc,
+) {
+	s.init()
+	s.router.Handle(method, path, handler)
 }
 
 // HTTP method shortcuts
 func (s *Server) GET(path string, handler HandlerFunc) {
-	Handle(GET, path, handler)
+	s.Handle(GET, path, handler)
 }
 
 func (s *Server) POST(path string, handler HandlerFunc) {
-	Handle(POST, path, handler)
+	s.Handle(POST, path, handler)
 }
 
 func (s *Server) PUT(path string, handler HandlerFunc) {
-	Handle(PUT, path, handler)
+	s.Handle(PUT, path, handler)
 }
 
 func (s *Server) DELETE(path string, handler HandlerFunc) {
-	Handle(DELETE, path, handler)
+	s.Handle(DELETE, path, handler)
+}
+
+func (s *Server) HEAD(path string, handler HandlerFunc) {
+	s.Handle(HEAD, path, handler)
+}
+
+func (s *Server) OPTIONS(path string, handler HandlerFunc) {
+	s.Handle(OPTIONS, path, handler)
+}
+
+func (s *Server) PATCH(path string, handler HandlerFunc) {
+	s.Handle(PATCH, path, handler)
 }

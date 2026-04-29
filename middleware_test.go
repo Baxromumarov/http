@@ -33,6 +33,7 @@ func TestLogger(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Errorf("Expected status 200, got %d", resp.StatusCode)
 	}
+
 	if string(resp.Body) != "test response" {
 		t.Errorf("Expected body 'test response', got '%s'", string(resp.Body))
 	}
@@ -62,6 +63,7 @@ func TestRecover(t *testing.T) {
 	if resp.StatusCode != 500 {
 		t.Errorf("Expected status 500, got %d", resp.StatusCode)
 	}
+
 	if string(resp.Body) != "Internal Server Error" {
 		t.Errorf("Expected body 'Internal Server Error', got '%s'", string(resp.Body))
 	}
@@ -94,9 +96,11 @@ func TestCORS(t *testing.T) {
 	if resp.Header.Get("Access-Control-Allow-Origin") != "*" {
 		t.Errorf("Expected Access-Control-Allow-Origin *, got %s", resp.Header.Get("Access-Control-Allow-Origin"))
 	}
-	if resp.Header.Get("Access-Control-Allow-Methods") != "GET, POST, PUT, DELETE, OPTIONS" {
+
+	if resp.Header.Get("Access-Control-Allow-Methods") != "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS" {
 		t.Errorf("Expected Access-Control-Allow-Methods, got %s", resp.Header.Get("Access-Control-Allow-Methods"))
 	}
+
 	if resp.Header.Get("Access-Control-Allow-Headers") != "Content-Type, Authorization" {
 		t.Errorf("Expected Access-Control-Allow-Headers, got %s", resp.Header.Get("Access-Control-Allow-Headers"))
 	}
@@ -152,6 +156,7 @@ func TestBasicAuth(t *testing.T) {
 			// Add Authorization header if credentials provided
 			if tt.username != "" && tt.password != "" {
 				credentials := fmt.Sprintf("%s:%s", tt.username, tt.password)
+
 				encoded := base64.StdEncoding.EncodeToString([]byte(credentials))
 				req.Header.Set("Authorization", "Basic "+encoded)
 			}
@@ -177,10 +182,10 @@ func TestBasicAuth(t *testing.T) {
 				t.Errorf("Expected status %d, got %d", tt.expectedStatus, resp.StatusCode)
 			}
 
-			// Check WWW-Authenticate header for 401
+			// Check Www-Authenticate header for 401
 			if tt.expectedStatus == 401 {
-				if resp.Header.Get("WWW-Authenticate") != "Basic realm=\"Restricted\"" {
-					t.Errorf("Expected WWW-Authenticate header, got %s", resp.Header.Get("WWW-Authenticate"))
+				if resp.Header.Get("Www-Authenticate") != "Basic realm=\"Restricted\"" {
+					t.Errorf("Expected Www-Authenticate header, got %s", resp.Header.Get("Www-Authenticate"))
 				}
 			}
 		})
@@ -288,7 +293,7 @@ func TestCORS_OptionsRequest(t *testing.T) {
 	if resp.Header.Get("Access-Control-Allow-Origin") != "*" {
 		t.Errorf("Expected Access-Control-Allow-Origin *, got %s", resp.Header.Get("Access-Control-Allow-Origin"))
 	}
-	if resp.Header.Get("Access-Control-Allow-Methods") != "GET, POST, PUT, DELETE, OPTIONS" {
+	if resp.Header.Get("Access-Control-Allow-Methods") != "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS" {
 		t.Errorf("Expected Access-Control-Allow-Methods, got %s", resp.Header.Get("Access-Control-Allow-Methods"))
 	}
 }

@@ -26,6 +26,7 @@ func TestHeader_Set(t *testing.T) {
 	if h.Get("Accept") != "application/json" {
 		t.Errorf("Expected 'application/json', got '%s'", h.Get("Accept"))
 	}
+
 	if h.Get("User-Agent") != "test-client" {
 		t.Errorf("Expected 'test-client', got '%s'", h.Get("User-Agent"))
 	}
@@ -45,7 +46,11 @@ func TestHeader_Add(t *testing.T) {
 	h.Add("Accept", "text/plain")
 
 	values := h.Values("Accept")
-	expected := []string{"application/json", "text/html", "text/plain"}
+	expected := [...]string{
+		"application/json",
+		"text/html",
+		"text/plain",
+	}
 
 	if len(values) != len(expected) {
 		t.Errorf("Expected %d values, got %d", len(expected), len(values))
@@ -124,8 +129,13 @@ func TestHeader_Values(t *testing.T) {
 	h.Add("Accept", "application/json")
 	h.Add("Accept", "text/html")
 	h.Add("Accept", "text/plain")
+
 	values = h.Values("Accept")
-	expected := []string{"application/json", "text/html", "text/plain"}
+	expected := [...]string{
+		"application/json",
+		"text/html",
+		"text/plain",
+	}
 
 	if len(values) != len(expected) {
 		t.Errorf("Expected %d values, got %d", len(expected), len(values))
@@ -213,7 +223,11 @@ func TestHeader_Clone(t *testing.T) {
 	}
 
 	values := cloned.Values("Accept")
-	expected := []string{"application/json", "text/html"}
+	expected := [...]string{
+		"application/json",
+		"text/html",
+	}
+
 	if len(values) != len(expected) {
 		t.Errorf("Expected %d Accept values in clone, got %d", len(expected), len(values))
 	}
@@ -258,21 +272,21 @@ func TestHeader_Exists(t *testing.T) {
 	}
 }
 
-func TestHeader_CaseSensitive(t *testing.T) {
+func TestHeader_CaseInsensitive(t *testing.T) {
 	h := make(Header)
 
-	// Test case sensitivity
+	// Test case insensitivity
 	h.Set("Content-Type", "application/json")
 
-	// Only exact case should work
+	// All cases should work
 	if h.Get("Content-Type") != "application/json" {
 		t.Errorf("Exact case should work")
 	}
-	if h.Get("content-type") == "application/json" {
-		t.Errorf("Lowercase key should not work")
+	if h.Get("content-type") != "application/json" {
+		t.Errorf("Lowercase key should work")
 	}
-	if h.Get("CONTENT-TYPE") == "application/json" {
-		t.Errorf("Uppercase key should not work")
+	if h.Get("CONTENT-TYPE") != "application/json" {
+		t.Errorf("Uppercase key should work")
 	}
 
 	// Test setting with different cases
@@ -280,8 +294,8 @@ func TestHeader_CaseSensitive(t *testing.T) {
 	if h.Get("ACCEPT") != "application/json" {
 		t.Errorf("Setting with uppercase and getting with uppercase should work")
 	}
-	if h.Get("accept") == "application/json" {
-		t.Errorf("Getting with lowercase should not work")
+	if h.Get("accept") != "application/json" {
+		t.Errorf("Getting with lowercase should work")
 	}
 }
 

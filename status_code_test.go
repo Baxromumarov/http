@@ -63,7 +63,6 @@ func TestContentTypeConstants(t *testing.T) {
 func TestResponse_WithStatus(t *testing.T) {
 	resp := &Response{
 		StatusCode: 200,
-		Body:       []byte("test"),
 	}
 
 	// Test that status code is set correctly
@@ -80,9 +79,7 @@ func TestResponse_WithStatus(t *testing.T) {
 
 func TestResponse_WithHeaders(t *testing.T) {
 	resp := &Response{
-		StatusCode: 200,
-		Header:     make(Header),
-		Body:       []byte("test"),
+		Header: make(Header),
 	}
 
 	// Set headers
@@ -101,9 +98,8 @@ func TestResponse_WithHeaders(t *testing.T) {
 func TestResponse_WithBody(t *testing.T) {
 	body := []byte(`{"message": "test"}`)
 	resp := &Response{
-		StatusCode: 200,
-		Header:     Header{"Content-Type": {ContentTypeJSON}},
-		Body:       body,
+		Header: Header{"Content-Type": {ContentTypeJSON}},
+		Body:   body,
 	}
 
 	// Set Content-Length header
@@ -122,9 +118,8 @@ func TestResponse_WithBody(t *testing.T) {
 
 func TestResponse_EmptyBody(t *testing.T) {
 	resp := &Response{
-		StatusCode: 204,
-		Header:     make(Header),
-		Body:       []byte{},
+		Header: make(Header),
+		Body:   []byte{},
 	}
 
 	// Set Content-Length header
@@ -162,7 +157,6 @@ func TestResponse_ErrorResponses(t *testing.T) {
 		t.Run(tt.statusText, func(t *testing.T) {
 			resp := &Response{
 				StatusCode: tt.statusCode,
-				Header:     make(Header),
 				Body:       []byte(tt.body),
 			}
 
@@ -202,7 +196,6 @@ func TestResponse_RedirectResponses(t *testing.T) {
 			resp := &Response{
 				StatusCode: tt.statusCode,
 				Header:     Header{"Location": {tt.location}},
-				Body:       []byte{},
 			}
 
 			// Test status code
@@ -240,7 +233,6 @@ func TestResponse_SuccessResponses(t *testing.T) {
 		t.Run(tt.statusText, func(t *testing.T) {
 			resp := &Response{
 				StatusCode: tt.statusCode,
-				Header:     make(Header),
 				Body:       []byte(tt.body),
 			}
 
@@ -266,9 +258,8 @@ func TestResponse_SuccessResponses(t *testing.T) {
 func TestResponse_JSONResponse(t *testing.T) {
 	jsonBody := `{"message": "success", "data": {"id": 1, "name": "test"}}`
 	resp := &Response{
-		StatusCode: 200,
-		Header:     Header{"Content-Type": {ContentTypeJSON}},
-		Body:       []byte(jsonBody),
+		Header: Header{"Content-Type": {ContentTypeJSON}},
+		Body:   []byte(jsonBody),
 	}
 
 	// Set Content-Length header
@@ -294,9 +285,8 @@ func TestResponse_JSONResponse(t *testing.T) {
 func TestResponse_HTMLResponse(t *testing.T) {
 	htmlBody := `<html><head><title>Test</title></head><body><h1>Hello World</h1></body></html>`
 	resp := &Response{
-		StatusCode: 200,
-		Header:     Header{"Content-Type": {ContentTypeHTML}},
-		Body:       []byte(htmlBody),
+		Header: Header{"Content-Type": {ContentTypeHTML}},
+		Body:   []byte(htmlBody),
 	}
 
 	// Test Content-Type
@@ -313,9 +303,8 @@ func TestResponse_HTMLResponse(t *testing.T) {
 func TestResponse_PlainTextResponse(t *testing.T) {
 	textBody := "Hello, World! This is plain text."
 	resp := &Response{
-		StatusCode: 200,
-		Header:     Header{"Content-Type": {ContentTypeText}},
-		Body:       []byte(textBody),
+		Header: Header{"Content-Type": {ContentTypeText}},
+		Body:   []byte(textBody),
 	}
 
 	// Test Content-Type
@@ -331,9 +320,7 @@ func TestResponse_PlainTextResponse(t *testing.T) {
 
 func TestResponse_WithCustomHeaders(t *testing.T) {
 	resp := &Response{
-		StatusCode: 200,
-		Header:     make(Header),
-		Body:       []byte("test"),
+		Header: make(Header),
 	}
 
 	// Set custom headers

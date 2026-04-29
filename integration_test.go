@@ -12,7 +12,7 @@ func TestIntegration_ServerAndClient(t *testing.T) {
 	server := NewDefaultServer("localhost", 0) // Use port 0 to get a random available port
 
 	// Register test routes
-	Handle(GET, "/api/test", func(req *Request) *Response {
+	server.Handle(GET, "/api/test", func(req *Request) *Response {
 		return &Response{
 			StatusCode: 200,
 			Header:     Header{"Content-Type": {ContentTypeJSON}},
@@ -20,20 +20,20 @@ func TestIntegration_ServerAndClient(t *testing.T) {
 		}
 	})
 
-	Handle(POST, "/api/test", func(req *Request) *Response {
+	server.Handle(POST, "/api/test", func(req *Request) *Response {
 		return &Response{
 			StatusCode: 201,
 			Header:     Header{"Content-Type": {ContentTypeJSON}},
-			Body:       []byte(fmt.Sprintf(`{"message": "created", "body": "%s"}`, string(req.Body))),
+			Body:       fmt.Appendf(nil, `{"message": "created", "body": %q}`, string(req.Body)),
 		}
 	})
 
-	Handle(GET, "/api/users/:id", func(req *Request) *Response {
+	server.Handle(GET, "/api/users/:id", func(req *Request) *Response {
 		userID := req.PathValue("id")
 		return &Response{
 			StatusCode: 200,
 			Header:     Header{"Content-Type": {ContentTypeJSON}},
-			Body:       []byte(fmt.Sprintf(`{"id": "%s", "name": "User %s"}`, userID, userID)),
+			Body:       fmt.Appendf(nil, `{"id": "%s", "name": "User %s"}`, userID, userID),
 		}
 	})
 
@@ -77,7 +77,7 @@ func TestIntegration_ServerAndClient(t *testing.T) {
 			t.Errorf("Expected status 200, got %d", resp.StatusCode)
 		}
 
-		var data map[string]interface{}
+		var data map[string]any
 		err = resp.Unmarshal(&data)
 		if err != nil {
 			t.Fatalf("Failed to unmarshal response: %v", err)
@@ -109,7 +109,7 @@ func TestIntegration_ServerAndClient(t *testing.T) {
 			t.Errorf("Expected status 201, got %d", resp.StatusCode)
 		}
 
-		var data map[string]interface{}
+		var data map[string]any
 		err = resp.Unmarshal(&data)
 		if err != nil {
 			t.Fatalf("Failed to unmarshal response: %v", err)
@@ -135,7 +135,7 @@ func TestIntegration_ServerAndClient(t *testing.T) {
 			t.Errorf("Expected status 200, got %d", resp.StatusCode)
 		}
 
-		var data map[string]interface{}
+		var data map[string]any
 		err = resp.Unmarshal(&data)
 		if err != nil {
 			t.Fatalf("Failed to unmarshal response: %v", err)
@@ -183,12 +183,12 @@ func TestIntegration_Middleware(t *testing.T) {
 		return &Response{
 			StatusCode: 200,
 			Header:     Header{"Content-Type": {ContentTypeJSON}},
-			Body:       []byte(fmt.Sprintf(`{"message": "Hello %v"}`, username)),
+			Body:       fmt.Appendf(nil, `{"message": "Hello %v"}`, username),
 		}
 	}
 
 	// Register the handler with middleware
-	Handle(GET, "/api/user", userHandler)
+	server.Handle(GET, "/api/user", userHandler)
 
 	// Start server
 	listener, err := net.Listen("tcp", "localhost:0")
@@ -234,7 +234,7 @@ func TestIntegration_Middleware(t *testing.T) {
 			t.Errorf("Expected CORS header Access-Control-Allow-Origin *, got %s", resp.Header.Get("Access-Control-Allow-Origin"))
 		}
 
-		var data map[string]interface{}
+		var data map[string]any
 		err = resp.Unmarshal(&data)
 		if err != nil {
 			t.Fatalf("Failed to unmarshal response: %v", err)
@@ -251,11 +251,11 @@ func TestIntegration_LargeRequest(t *testing.T) {
 	server := NewDefaultServer("localhost", 0)
 
 	// Register handler that echoes back the request body
-	Handle(POST, "/api/echo", func(req *Request) *Response {
+	server.Handle(POST, "/api/echo", func(req *Request) *Response {
 		return &Response{
 			StatusCode: 200,
 			Header:     Header{"Content-Type": {ContentTypeJSON}},
-			Body:       []byte(fmt.Sprintf(`{"length": %d, "body": "%s"}`, len(req.Body), string(req.Body))),
+			Body:       fmt.Appendf(nil, `{"length": %d, "body": "%s"}`, len(req.Body), string(req.Body)),
 		}
 	})
 
@@ -307,7 +307,7 @@ func TestIntegration_LargeRequest(t *testing.T) {
 			t.Errorf("Expected status 200, got %d", resp.StatusCode)
 		}
 
-		var data map[string]interface{}
+		var data map[string]any
 		err = resp.Unmarshal(&data)
 		if err != nil {
 			t.Fatalf("Failed to unmarshal response: %v", err)
@@ -326,7 +326,7 @@ func TestIntegration_ConcurrentRequests(t *testing.T) {
 	server := NewDefaultServer("localhost", 0)
 
 	// Register a simple handler
-	Handle(GET, "/api/test", func(req *Request) *Response {
+	server.Handle(GET, "/api/test", func(req *Request) *Response {
 		return &Response{
 			StatusCode: 200,
 			Header:     Header{"Content-Type": {ContentTypeJSON}},
@@ -362,7 +362,7 @@ func TestIntegration_ConcurrentRequests(t *testing.T) {
 		const numRequests = 10
 		results := make(chan error, numRequests)
 
-		for i := 0; i < numRequests; i++ {
+		for i := range numRequests {
 			go func(id int) {
 				req, err := NewRequest(GET, fmt.Sprintf("http://localhost:%d/api/test", serverPort), nil)
 				if err != nil {
@@ -386,7 +386,7 @@ func TestIntegration_ConcurrentRequests(t *testing.T) {
 		}
 
 		// Collect results
-		for i := 0; i < numRequests; i++ {
+		for range numRequests {
 			if err := <-results; err != nil {
 				t.Errorf("Concurrent request failed: %v", err)
 			}
