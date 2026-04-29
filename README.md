@@ -42,7 +42,7 @@ func main() {
     })
     
     // Start the server
-    fmt.Println("🚀 Server starting on http://localhost:8080")
+    fmt.Println("Server starting on http://localhost:8080")
     server.StartServer()
 }
 ```
